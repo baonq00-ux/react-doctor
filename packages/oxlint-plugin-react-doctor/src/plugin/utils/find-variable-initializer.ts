@@ -1,4 +1,5 @@
 import type { EsTreeNode } from "./es-tree-node.js";
+import { findProgramRoot } from "./find-program-root.js";
 import { isAstNode } from "./is-ast-node.js";
 import { isNodeOfType } from "./is-node-of-type.js";
 
@@ -251,15 +252,6 @@ const buildBindingIndex = (root: EsTreeNode): Map<string, BindingInfo[]> => {
 };
 
 const programRootCache = new WeakMap<EsTreeNode, Map<string, BindingInfo[]>>();
-
-const findProgramRoot = (node: EsTreeNode): EsTreeNode | null => {
-  let current: EsTreeNode | null | undefined = node;
-  while (current) {
-    if (current.type === "Program") return current;
-    current = current.parent ?? null;
-  }
-  return null;
-};
 
 const getBindingIndex = (referenceNode: EsTreeNode): Map<string, BindingInfo[]> | null => {
   const programRoot = findProgramRoot(referenceNode);

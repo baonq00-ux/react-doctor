@@ -1,6 +1,7 @@
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { findProgramRoot } from "../../utils/find-program-root.js";
 import { isAstNode } from "../../utils/is-ast-node.js";
 import { isCreateElementCall } from "../../utils/is-create-element-call.js";
 import { isEs5Component } from "../../utils/is-es5-component.js";
@@ -303,15 +304,6 @@ const hasDisplayNameAssignmentForProperty = (
   };
   visit(programRoot);
   return found;
-};
-
-const findProgramRoot = (node: EsTreeNode): EsTreeNode | null => {
-  let current: EsTreeNode | null | undefined = node;
-  while (current) {
-    if (current.type === "Program") return current;
-    current = current.parent ?? null;
-  }
-  return null;
 };
 
 // Port of `oxc_linter::rules::react::display_name`. Reports React

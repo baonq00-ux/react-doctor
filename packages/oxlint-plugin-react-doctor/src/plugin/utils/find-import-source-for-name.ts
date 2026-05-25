@@ -1,4 +1,5 @@
 import type { EsTreeNode } from "./es-tree-node.js";
+import { findProgramRoot } from "./find-program-root.js";
 import { isAstNode } from "./is-ast-node.js";
 
 interface ImportInfo {
@@ -7,15 +8,6 @@ interface ImportInfo {
   isDefault: boolean;
   isNamespace: boolean;
 }
-
-const findProgramRoot = (node: EsTreeNode): EsTreeNode | null => {
-  let current: EsTreeNode | null | undefined = node;
-  while (current) {
-    if (current.type === "Program") return current;
-    current = current.parent ?? null;
-  }
-  return null;
-};
 
 const collectFromProgram = (programRoot: EsTreeNode): Map<string, ImportInfo> => {
   const lookup = new Map<string, ImportInfo>();

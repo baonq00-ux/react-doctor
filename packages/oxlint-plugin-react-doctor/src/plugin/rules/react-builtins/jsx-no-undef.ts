@@ -1,20 +1,12 @@
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { findProgramRoot } from "../../utils/find-program-root.js";
 import { findVariableInitializer } from "../../utils/find-variable-initializer.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { Rule } from "../../utils/rule.js";
 
 const buildMessage = (name: string): string => `\`${name}\` is not defined in this scope.`;
-
-const findProgramRoot = (node: EsTreeNode): EsTreeNode | null => {
-  let current: EsTreeNode | null | undefined = node;
-  while (current) {
-    if (current.type === "Program") return current;
-    current = current.parent ?? null;
-  }
-  return null;
-};
 
 const KNOWN_GLOBALS = new Set([
   "globalThis",

@@ -1,4 +1,5 @@
 import type { EsTreeNode } from "./es-tree-node.js";
+import { findProgramRoot } from "./find-program-root.js";
 import type { Rule } from "./rule.js";
 import type { BaseRuleContext, RuleContext } from "./rule-context.js";
 import type { HostRule } from "./rule-plugin.js";
@@ -52,15 +53,6 @@ const FALLBACK_CFG: ControlFlowAnalysis = {
   enclosingFunction: () => null,
   isUnconditionalFromEntry: () => false,
   dominatesExit: () => false,
-};
-
-const findProgramRoot = (node: EsTreeNode): EsTreeNode | null => {
-  let current: EsTreeNode | null | undefined = node;
-  while (current) {
-    if (current.type === "Program") return current;
-    current = current.parent ?? null;
-  }
-  return null;
 };
 
 export const wrapWithSemanticContext = (rule: Rule): HostRule => ({

@@ -1,20 +1,12 @@
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { findProgramRoot } from "../../utils/find-program-root.js";
 import { hasBindingNamed } from "../../utils/has-binding-named.js";
 import type { Rule } from "../../utils/rule.js";
 
 const MESSAGE =
   "`React` must be in scope when using JSX (the classic JSX transform expands `<a/>` to `React.createElement('a')`).";
-
-const findProgramRoot = (node: EsTreeNode): EsTreeNode | null => {
-  let current: EsTreeNode | null | undefined = node;
-  while (current) {
-    if (current.type === "Program") return current;
-    current = current.parent ?? null;
-  }
-  return null;
-};
 
 // Port of `oxc_linter::rules::react::react_in_jsx_scope`. Only relevant
 // for the legacy classic JSX runtime; tsconfig `jsx: "react-jsx"` (or

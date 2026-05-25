@@ -1,6 +1,7 @@
 import { analyze, type Scope, type ScopeManager } from "eslint-scope";
 import type { EsTreeNode } from "../../../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../../../utils/es-tree-node-of-type.js";
+import { findProgramRoot } from "../../../../utils/find-program-root.js";
 import { isNodeOfType } from "../../../../utils/is-node-of-type.js";
 import { VISITOR_KEYS } from "./constants.js";
 
@@ -13,15 +14,6 @@ export interface ProgramAnalysis {
 // share a single eslint-scope analysis per file. The analysis is built
 // lazily on first access from any rule.
 const programToAnalysis: WeakMap<EsTreeNode, ProgramAnalysis> = new WeakMap();
-
-const findProgramRoot = (node: EsTreeNode): EsTreeNodeOfType<"Program"> | null => {
-  let cursor: EsTreeNode | null | undefined = node;
-  while (cursor) {
-    if (isNodeOfType(cursor, "Program")) return cursor;
-    cursor = cursor.parent;
-  }
-  return null;
-};
 
 // Strips `.parent` from every node in the subtree and remembers the
 // originals so we can restore them after eslint-scope's `analyze()`
