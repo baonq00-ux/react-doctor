@@ -10,6 +10,7 @@ import {
 import { highlighter, SKILL_NAME } from "@react-doctor/core";
 import { cliLogger as logger } from "./cli-logger.js";
 import { detectAvailableAgents } from "./detect-agents.js";
+import { installDoctorScript } from "./install-doctor-script.js";
 import { installReactDoctorAgentHooks } from "./install-agent-hooks.js";
 import { GitHookKind, type GitHookTarget } from "./git-hook-types.js";
 import { detectGitHookTarget, installReactDoctorGitHook } from "./install-git-hook.js";
@@ -48,6 +49,44 @@ const formatGitHookInstallMessage = (
   return `React Doctor pre-commit hook ${hookResult.status} at ${hookResult.hookPath}.`;
 };
 
+const formatDoctorScriptInstallMessage = (
+  scriptResult: ReturnType<typeof installDoctorScript>,
+): string => {
+  const messages: string[] = [];
+  if (scriptResult.scriptStatus === "created") {
+    messages.push("Added package script: doctor.");
+  } else if (scriptResult.scriptStatus === "existing") {
+    messages.push("Package script already exists: doctor.");
+  } else if (scriptResult.scriptReason === "invalid-scripts") {
+    messages.push(`Skipped package script: scripts field is not an object.`);
+  } else {
+    messages.push("Skipped package script: package.json missing or invalid.");
+  }
+
+  if (scriptResult.dependencyStatus === "created") {
+    messages.push("Added dev dependency: react-doctor.");
+  } else if (scriptResult.dependencyStatus === "existing") {
+    messages.push("React Doctor dependency already exists.");
+  } else if (scriptResult.dependencyReason === "invalid-dev-dependencies") {
+    messages.push("Skipped dev dependency: devDependencies field is not an object.");
+  } else {
+    messages.push("Skipped dev dependency: package.json missing or invalid.");
+  }
+
+  return messages.join(" ");
+};
+
+const installReactDoctorPackageSetup = (projectRoot: string): void => {
+  const scriptSpinner = spinner("Installing React Doctor package setup...").start();
+  try {
+    const scriptResult = installDoctorScript({ projectRoot });
+    scriptSpinner.succeed(formatDoctorScriptInstallMessage(scriptResult));
+  } catch (error) {
+    scriptSpinner.fail("Failed to install React Doctor package setup.");
+    throw error;
+  }
+};
+
 interface InstallSkillOptions {
   yes?: boolean;
   dryRun?: boolean;
@@ -57,6 +96,7 @@ interface InstallSkillOptions {
   projectRoot?: string;
   detectedAgents?: SkillAgentType[];
   gitHookPath?: string | null;
+  onPromptCancel?: () => void;
 }
 
 const getSkillSourceDirectory = (): string => {
@@ -67,6 +107,10 @@ const getSkillSourceDirectory = (): string => {
 export const runInstallSkill = async (options: InstallSkillOptions = {}): Promise<void> => {
   const projectRoot = options.projectRoot ?? process.cwd();
   const sourceDir = options.sourceDir ?? getSkillSourceDirectory();
+
+  if (!options.dryRun) {
+    installReactDoctorPackageSetup(projectRoot);
+  }
 
   if (!existsSync(path.join(sourceDir, SKILL_MANIFEST_FILE))) {
     logger.error(`Could not locate the ${SKILL_NAME} skill bundled with this package.`);
@@ -93,22 +137,27 @@ export const runInstallSkill = async (options: InstallSkillOptions = {}): Promis
         ? null
         : buildManualGitHookTarget(options.gitHookPath, projectRoot);
   const gitHookPath = gitHookTarget?.hookPath;
+  const promptOptions =
+    options.onPromptCancel === undefined ? {} : { onCancel: options.onPromptCancel };
 
   const selectedAgents: SkillAgentType[] = skipPrompts
     ? detectedAgents
     : ((
-        await prompts({
-          type: "multiselect",
-          name: "agents",
-          message: `Install the ${highlighter.info(SKILL_NAME)} skill for:`,
-          choices: detectedAgents.map((agent) => ({
-            title: getSkillAgentConfig(agent).displayName,
-            value: agent,
-            selected: true,
-          })),
-          instructions: false,
-          min: 1,
-        })
+        await prompts(
+          {
+            type: "multiselect",
+            name: "agents",
+            message: `Install the ${highlighter.info(SKILL_NAME)} skill for:`,
+            choices: detectedAgents.map((agent) => ({
+              title: getSkillAgentConfig(agent).displayName,
+              value: agent,
+              selected: true,
+            })),
+            instructions: false,
+            min: 1,
+          },
+          promptOptions,
+        )
       ).agents ?? []);
 
   if (selectedAgents.length === 0) return;
@@ -120,12 +169,15 @@ export const runInstallSkill = async (options: InstallSkillOptions = {}): Promis
       (!skipPrompts &&
         Boolean(
           (
-            await prompts<"installGitHook">({
-              type: "confirm",
-              name: "installGitHook",
-              message: "Run React Doctor on staged files before commits? (non-blocking git hook)",
-              initial: true,
-            })
+            await prompts<"installGitHook">(
+              {
+                type: "confirm",
+                name: "installGitHook",
+                message: "Run React Doctor on staged files before commits? (non-blocking git hook)",
+                initial: true,
+              },
+              promptOptions,
+            )
           ).installGitHook,
         )));
 
@@ -135,12 +187,15 @@ export const runInstallSkill = async (options: InstallSkillOptions = {}): Promis
       hasNativeAgentHookTarget(selectedAgents) &&
       Boolean(
         (
-          await prompts<"installAgentHooks">({
-            type: "confirm",
-            name: "installAgentHooks",
-            message: "Install native agent hooks after file edits? (Claude Code / Cursor)",
-            initial: false,
-          })
+          await prompts<"installAgentHooks">(
+            {
+              type: "confirm",
+              name: "installAgentHooks",
+              message: "Install native agent hooks after file edits? (Claude Code / Cursor)",
+              initial: false,
+            },
+            promptOptions,
+          )
         ).installAgentHooks,
       ));
 
@@ -150,6 +205,8 @@ export const runInstallSkill = async (options: InstallSkillOptions = {}): Promis
       logger.dim(`  - ${getSkillAgentConfig(agent).displayName}`);
     }
     logger.dim(`  Source: ${sourceDir}`);
+    logger.dim("  Package script: doctor");
+    logger.dim("  Dev dependency: react-doctor");
     if (shouldInstallGitHook) {
       logger.dim(`  Git hook: ${gitHookPath}`);
     }

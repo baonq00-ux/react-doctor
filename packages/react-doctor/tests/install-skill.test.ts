@@ -33,6 +33,13 @@ const writeValidSkill = (sourceDir: string): void => {
   );
 };
 
+const writePackageJson = (projectRoot: string, value: Record<string, unknown>): void => {
+  writeFileSync(path.join(projectRoot, "package.json"), `${JSON.stringify(value, null, 2)}\n`);
+};
+
+const readFixturePackageJson = (projectRoot: string): Record<string, unknown> =>
+  JSON.parse(readFileSync(path.join(projectRoot, "package.json"), "utf8"));
+
 describe("runInstallSkill", () => {
   let fixture: InstallSkillFixture;
   let originalExitCode: number | string | null | undefined;
@@ -61,6 +68,7 @@ describe("runInstallSkill", () => {
   });
 
   it("exits with code 1 when the bundled SKILL.md is missing", async () => {
+    writePackageJson(fixture.projectRoot, { scripts: {} });
     await runInstallSkill({
       yes: true,
       sourceDir: fixture.sourceDir,
@@ -68,10 +76,17 @@ describe("runInstallSkill", () => {
       detectedAgents: ["cursor"],
     });
     expect(process.exitCode).toBe(1);
+    expect(readFixturePackageJson(fixture.projectRoot).scripts).toEqual({
+      doctor: "react-doctor",
+    });
+    expect(readFixturePackageJson(fixture.projectRoot).devDependencies).toEqual({
+      "react-doctor": "latest",
+    });
   });
 
   it("exits with code 1 when no agents are detected", async () => {
     writeValidSkill(fixture.sourceDir);
+    writePackageJson(fixture.projectRoot, { scripts: {} });
     await runInstallSkill({
       yes: true,
       sourceDir: fixture.sourceDir,
@@ -80,6 +95,12 @@ describe("runInstallSkill", () => {
     });
     expect(process.exitCode).toBe(1);
     expect(existsSync(path.join(fixture.projectRoot, ".agents"))).toBe(false);
+    expect(readFixturePackageJson(fixture.projectRoot).scripts).toEqual({
+      doctor: "react-doctor",
+    });
+    expect(readFixturePackageJson(fixture.projectRoot).devDependencies).toEqual({
+      "react-doctor": "latest",
+    });
   });
 
   it("throws when SKILL.md exists but has no parseable frontmatter (H1 silent-success regression guard)", async () => {
@@ -118,6 +139,7 @@ describe("runInstallSkill", () => {
 
   it("--dry-run writes nothing, even with valid SKILL.md and detected agents", async () => {
     writeValidSkill(fixture.sourceDir);
+    writePackageJson(fixture.projectRoot, { scripts: {} });
     await runInstallSkill({
       yes: true,
       dryRun: true,
@@ -130,6 +152,101 @@ describe("runInstallSkill", () => {
     expect(existsSync(path.join(fixture.projectRoot, ".claude"))).toBe(false);
     expect(existsSync(path.join(fixture.projectRoot, ".cursor"))).toBe(false);
     expect(existsSync(path.join(fixture.projectRoot, ".factory"))).toBe(false);
+    expect(readFixturePackageJson(fixture.projectRoot).scripts).toEqual({});
+  });
+
+  it("adds doctor package setup when package.json exists and setup is missing", async () => {
+    writeValidSkill(fixture.sourceDir);
+    writePackageJson(fixture.projectRoot, {
+      scripts: {
+        test: "vite-plus test",
+      },
+    });
+
+    await runInstallSkill({
+      yes: true,
+      sourceDir: fixture.sourceDir,
+      projectRoot: fixture.projectRoot,
+      detectedAgents: ["cursor"],
+      gitHookPath: null,
+    });
+
+    expect(readFixturePackageJson(fixture.projectRoot).scripts).toEqual({
+      test: "vite-plus test",
+      doctor: "react-doctor",
+    });
+    expect(readFixturePackageJson(fixture.projectRoot).devDependencies).toEqual({
+      "react-doctor": "latest",
+    });
+  });
+
+  it("does not overwrite an existing doctor package script", async () => {
+    writeValidSkill(fixture.sourceDir);
+    writePackageJson(fixture.projectRoot, {
+      scripts: {
+        doctor: "pnpm react-doctor --verbose",
+      },
+    });
+
+    await runInstallSkill({
+      yes: true,
+      sourceDir: fixture.sourceDir,
+      projectRoot: fixture.projectRoot,
+      detectedAgents: ["cursor"],
+      gitHookPath: null,
+    });
+
+    expect(readFixturePackageJson(fixture.projectRoot).scripts).toEqual({
+      doctor: "pnpm react-doctor --verbose",
+    });
+    expect(readFixturePackageJson(fixture.projectRoot).devDependencies).toEqual({
+      "react-doctor": "latest",
+    });
+  });
+
+  it("does not overwrite an existing react-doctor dependency", async () => {
+    writeValidSkill(fixture.sourceDir);
+    writePackageJson(fixture.projectRoot, {
+      devDependencies: {
+        "react-doctor": "^1.2.3",
+      },
+      scripts: {},
+    });
+
+    await runInstallSkill({
+      yes: true,
+      sourceDir: fixture.sourceDir,
+      projectRoot: fixture.projectRoot,
+      detectedAgents: ["cursor"],
+      gitHookPath: null,
+    });
+
+    expect(readFixturePackageJson(fixture.projectRoot).scripts).toEqual({
+      doctor: "react-doctor",
+    });
+    expect(readFixturePackageJson(fixture.projectRoot).devDependencies).toEqual({
+      "react-doctor": "^1.2.3",
+    });
+  });
+
+  it("does not crash setup when package.json is invalid", async () => {
+    writeValidSkill(fixture.sourceDir);
+    writeFileSync(path.join(fixture.projectRoot, "package.json"), "{ invalid json");
+
+    await runInstallSkill({
+      yes: true,
+      sourceDir: fixture.sourceDir,
+      projectRoot: fixture.projectRoot,
+      detectedAgents: ["cursor"],
+      gitHookPath: null,
+    });
+
+    expect(existsSync(path.join(fixture.projectRoot, ".agents/skills/react-doctor/SKILL.md"))).toBe(
+      true,
+    );
+    expect(readFileSync(path.join(fixture.projectRoot, "package.json"), "utf8")).toBe(
+      "{ invalid json",
+    );
   });
 
   it("installs the skill into the universal .agents/skills directory for a universal agent", async () => {
