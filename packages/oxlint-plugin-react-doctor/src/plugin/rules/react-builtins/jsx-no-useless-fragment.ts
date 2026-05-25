@@ -1,6 +1,7 @@
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { hasJsxKeyAttribute } from "../../utils/has-jsx-key-attribute.js";
 import { isJsxFragmentElement } from "../../utils/is-jsx-fragment-element.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { Rule } from "../../utils/rule.js";
@@ -54,13 +55,6 @@ const hasCallExpressionChild = (children: ReadonlyArray<EsTreeNode>): boolean =>
   return false;
 };
 
-const hasKeyAttribute = (openingElement: EsTreeNodeOfType<"JSXOpeningElement">): boolean => {
-  for (const attribute of openingElement.attributes) {
-    if (!isNodeOfType(attribute, "JSXAttribute")) continue;
-    if (isNodeOfType(attribute.name, "JSXIdentifier") && attribute.name.name === "key") return true;
-  }
-  return false;
-};
 
 const isLowercaseHtmlTag = (node: EsTreeNode): boolean => {
   if (!isNodeOfType(node, "JSXOpeningElement")) return false;
@@ -139,7 +133,7 @@ export const jsxNoUselessFragment = defineRule<Rule>({
       JSXElement(node: EsTreeNodeOfType<"JSXElement">) {
         const openingElement = node.openingElement;
         if (!isJsxFragmentElement(openingElement as EsTreeNode)) return;
-        if (hasKeyAttribute(openingElement)) return;
+        if (hasJsxKeyAttribute(openingElement)) return;
         const didReport = checkChildren(node, openingElement, node.children);
         if (didReport) return;
         if (isChildOfHtmlElement(node)) {

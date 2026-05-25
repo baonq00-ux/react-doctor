@@ -2,6 +2,7 @@ import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
 import { getStaticTemplateLiteralValue } from "../../utils/get-static-template-literal-value.js";
+import { hasJsxKeyAttribute } from "../../utils/has-jsx-key-attribute.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { Rule } from "../../utils/rule.js";
 
@@ -143,14 +144,6 @@ const isWithinChildrenToArray = (jsxNode: EsTreeNode): boolean => {
   return false;
 };
 
-const hasKeyAttribute = (openingElement: EsTreeNodeOfType<"JSXOpeningElement">): boolean => {
-  for (const attribute of openingElement.attributes) {
-    if (!isNodeOfType(attribute, "JSXAttribute")) continue;
-    if (!isNodeOfType(attribute.name, "JSXIdentifier")) continue;
-    if (attribute.name.name === "key") return true;
-  }
-  return false;
-};
 
 const checkKeyBeforeSpread = (
   context: Parameters<Rule["create"]>[0],
@@ -259,7 +252,7 @@ export const jsxKey = defineRule<Rule>({
         const enclosingContext = findEnclosingIteratorContext(node);
         if (!enclosingContext) return;
         if (isWithinChildrenToArray(node)) return;
-        if (hasKeyAttribute(openingElement)) return;
+        if (hasJsxKeyAttribute(openingElement)) return;
         context.report({
           node: openingElement,
           message: enclosingContext.kind === "array" ? MISSING_KEY_ARRAY : MISSING_KEY_ITERATOR,
