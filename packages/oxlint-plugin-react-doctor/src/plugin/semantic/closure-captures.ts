@@ -1,6 +1,7 @@
 import type { EsTreeNode } from "../utils/es-tree-node.js";
 import type { ReferenceDescriptor, ScopeAnalysis } from "./scope-analysis.js";
 import { isDescendantScope } from "./scope-analysis.js";
+import { isAstDescendant } from "../utils/is-ast-descendant.js";
 import { isAstNode } from "../utils/is-ast-node.js";
 import { isFunctionLike } from "../utils/is-function-like.js";
 
@@ -15,15 +16,6 @@ const TYPE_ONLY_CHILD_KEYS: ReadonlySet<string> = new Set([
 
 // True if `inner` is a descendant of `outer` (or equal) in the AST
 // tree. Used to filter references inside `functionNode`.
-const isAstDescendant = (inner: EsTreeNode, outer: EsTreeNode): boolean => {
-  let current: EsTreeNode | null | undefined = inner;
-  while (current) {
-    if (current === outer) return true;
-    current = current.parent ?? null;
-  }
-  return false;
-};
-
 // Returns every reference inside `functionNode`'s body whose binding
 // lives OUTSIDE the function — i.e. the closure-captured set. Useful
 // for exhaustive-deps to compute the actual set of values a hook

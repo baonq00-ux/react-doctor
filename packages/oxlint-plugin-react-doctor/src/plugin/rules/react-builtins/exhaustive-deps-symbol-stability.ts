@@ -3,6 +3,7 @@ import type { ScopeAnalysis, SymbolDescriptor } from "../../semantic/scope-analy
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
 import { getStaticTemplateLiteralValue } from "../../utils/get-static-template-literal-value.js";
+import { isAstDescendant } from "../../utils/is-ast-descendant.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import {
   getHookName,
@@ -120,15 +121,6 @@ export const getFunctionValueNode = (symbol: SymbolDescriptor): EsTreeNode | nul
     return initializer;
   }
   return null;
-};
-
-const isAstDescendant = (inner: EsTreeNode, outer: EsTreeNode): boolean => {
-  let current: EsTreeNode | null | undefined = inner;
-  while (current) {
-    if (current === outer) return true;
-    current = current.parent ?? null;
-  }
-  return false;
 };
 
 export const isRecursiveInitializerCapture = (
