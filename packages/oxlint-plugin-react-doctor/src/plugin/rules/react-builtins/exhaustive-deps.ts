@@ -13,87 +13,31 @@ import { isAstNode } from "../../utils/is-ast-node.js";
 import { isReactComponentOrHookName } from "../../utils/is-react-component-or-hook-name.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { Rule } from "../../utils/rule.js";
+import {
+  buildAssignmentMessage,
+  buildAsyncEffectMessage,
+  buildComplexDepMessage,
+  buildDuplicateDepMessage,
+  buildEffectEventDepMessage,
+  buildLiteralDepMessage,
+  buildMissingCallbackMessage,
+  buildMissingDepArrayMessage,
+  buildMissingDepMessage,
+  buildNonArrayDepsMessage,
+  buildRefCleanupMessage,
+  buildRefCurrentDepMessage,
+  buildSetStateWithoutDepsMessage,
+  buildSpreadDepMessage,
+  buildUnknownCallbackMessage,
+  buildUnnecessaryDepMessage,
+  buildUnstableDepMessage,
+} from "./exhaustive-deps-messages.js";
+import { resolveExhaustiveDepsSettings } from "./exhaustive-deps-settings.js";
 
 // Port of `oxc_linter::rules::react::exhaustive_deps`. Diffs the
 // closure-captured set of an effect / memo callback against its
 // declared dependency array. Built on top of Phase A's scope analyzer
 // and Phase C's closure-capture helper.
-
-const buildMissingDepMessage = (hookName: string, depName: string): string =>
-  `React Hook \`${hookName}\` is missing dependency \`${depName}\` — list it in the dependency array, or call the hook unconditionally.`;
-const buildUnnecessaryDepMessage = (hookName: string, depName: string): string =>
-  `React Hook \`${hookName}\` has an unnecessary dependency \`${depName}\` — it isn't referenced inside the callback.`;
-const buildDuplicateDepMessage = (hookName: string, depName: string): string =>
-  `React Hook \`${hookName}\` has duplicate dependency \`${depName}\`.`;
-const buildLiteralDepMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` was passed a literal as a dependency. Literals never change so they cannot trigger an update — remove them from the dependency array.`;
-const buildRefCurrentDepMessage = (hookName: string, depName: string): string =>
-  `React Hook \`${hookName}\` shouldn't include \`${depName}\` in the dependency array — mutable values like \`.current\` aren't valid deps; depend on \`${depName.replace(/\.current$/, "")}\` itself instead.`;
-const buildNonArrayDepsMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` has a second argument which is not an array literal. This means oxlint cannot statically verify whether the dependencies are exhaustive — replace the variable with an inline array.`;
-const buildMissingDepArrayMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` does nothing when called with only one argument — pass a dependency array as the second argument.`;
-const buildMissingCallbackMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` requires an effect callback — pass a function as the first argument.`;
-const buildEffectEventDepMessage = (depName: string): string =>
-  `Functions returned from \`useEffectEvent\` must not be included in the dependency array. Remove \`${depName}\` from the list.`;
-const buildSpreadDepMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` has a spread element in its dependency array. This means oxlint cannot statically verify whether the dependencies are exhaustive.`;
-const buildComplexDepMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked.`;
-const buildAsyncEffectMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` received an async callback. Put the async function inside the effect instead.`;
-const buildUnknownCallbackMessage = (hookName: string): string =>
-  `React Hook \`${hookName}\` received a function whose dependencies are unknown. Pass an inline function instead.`;
-const buildUnstableDepMessage = (hookName: string, depName: string): string =>
-  `The \`${depName}\` value makes the dependencies of \`${hookName}\` change on every render. Move it inside the hook callback or wrap it in its own memoization hook.`;
-const buildSetStateWithoutDepsMessage = (hookName: string, setterName: string): string =>
-  `React Hook \`${hookName}\` contains a call to \`${setterName}\`. Without a dependency array, this can lead to an infinite chain of updates.`;
-const buildRefCleanupMessage = (depName: string): string =>
-  `The ref value \`${depName}\` will likely have changed by the time this effect cleanup function runs. Copy it to a variable inside the hook callback and use that variable in cleanup.`;
-const buildAssignmentMessage = (name: string): string =>
-  `Assignments to the \`${name}\` variable from inside a React Hook will be lost after each render. Store it in a ref to preserve the value over time.`;
-
-interface ExhaustiveDepsSettings {
-  additionalHooks?: string;
-  additionalEffectHooks?: string;
-  enableDangerousAutofixThisMayCauseInfiniteLoops?: boolean;
-  experimental_autoDependenciesHooks?: ReadonlyArray<string>;
-  requireExplicitEffectDeps?: boolean;
-}
-
-const resolveSettings = (
-  settings: Readonly<Record<string, unknown>> | undefined,
-): Required<ExhaustiveDepsSettings> => {
-  const reactDoctor = settings?.["react-doctor"];
-  const reactHooks = settings?.["react-hooks"];
-  const ruleSettings =
-    typeof reactDoctor === "object" && reactDoctor !== null
-      ? ((reactDoctor as { exhaustiveDeps?: ExhaustiveDepsSettings }).exhaustiveDeps ?? {})
-      : {};
-  const upstreamSettings =
-    typeof reactHooks === "object" && reactHooks !== null
-      ? (reactHooks as ExhaustiveDepsSettings)
-      : {};
-  return {
-    additionalHooks:
-      ruleSettings.additionalHooks ??
-      ruleSettings.additionalEffectHooks ??
-      upstreamSettings.additionalHooks ??
-      upstreamSettings.additionalEffectHooks ??
-      "",
-    additionalEffectHooks:
-      ruleSettings.additionalEffectHooks ?? upstreamSettings.additionalEffectHooks ?? "",
-    enableDangerousAutofixThisMayCauseInfiniteLoops:
-      ruleSettings.enableDangerousAutofixThisMayCauseInfiniteLoops ?? false,
-    experimental_autoDependenciesHooks:
-      ruleSettings.experimental_autoDependenciesHooks ??
-      upstreamSettings.experimental_autoDependenciesHooks ??
-      [],
-    requireExplicitEffectDeps:
-      ruleSettings.requireExplicitEffectDeps ?? upstreamSettings.requireExplicitEffectDeps ?? false,
-  };
-};
 
 // Hooks whose callback captures must match a deps array.
 const HOOKS_REQUIRING_DEPS_MATCH: ReadonlySet<string> = new Set([
@@ -914,7 +858,7 @@ export const exhaustiveDeps = defineRule<Rule>({
   recommendation: "List every value the hook callback captures in its dependency array.",
   category: "Correctness",
   create: (context) => {
-    const settings = resolveSettings(context.settings);
+    const settings = resolveExhaustiveDepsSettings(context.settings);
     const additionalHooksRegex = buildAdditionalHooksRegex(settings.additionalHooks);
     const isHookOfInterest = (hookName: string, callee: EsTreeNode): boolean => {
       if (HOOKS_REQUIRING_DEPS_MATCH.has(hookName)) return true;
