@@ -12,7 +12,13 @@ import {
   toRelativePath,
 } from "@react-doctor/core";
 import { inspect } from "../../inspect.js";
-import type { Diagnostic, InspectResult } from "@react-doctor/core";
+import type {
+  Diagnostic,
+  DiffInfo,
+  InspectResult,
+  JsonReportMode,
+  ReactDoctorConfig,
+} from "@react-doctor/core";
 import { cliLogger as logger } from "../utils/cli-logger.js";
 import { STAGED_FILES_TEMP_DIR_PREFIX } from "../utils/constants.js";
 import { getStagedSourceFiles, materializeStagedFiles } from "../utils/get-staged-files.js";
@@ -42,6 +48,65 @@ import { shouldFailForDiagnostics } from "../utils/should-fail-for-diagnostics.j
 import { shouldSkipPrompts } from "../utils/should-skip-prompts.js";
 import { validateModeFlags } from "../utils/validate-mode-flags.js";
 import { VERSION } from "../utils/version.js";
+
+interface CompletedScan {
+  directory: string;
+  result: InspectResult;
+}
+
+interface FinalizeScansInput {
+  readonly diagnostics: Diagnostic[];
+  readonly completedScans: CompletedScan[];
+  readonly mode: JsonReportMode;
+  readonly diff: DiffInfo | null;
+  readonly isJsonMode: boolean;
+  readonly isScoreOnly: boolean;
+  readonly flags: InspectFlags;
+  readonly userConfig: ReactDoctorConfig | null;
+  readonly resolvedDirectory: string;
+  readonly startTime: number;
+}
+
+/**
+ * Post-scan finalization shared by the staged-arm and project-loop
+ * paths of `inspectAction`: emit the JSON report (when in JSON mode),
+ * print PR annotations (when `--annotations`), and set
+ * `process.exitCode = 1` when the configured fail-on threshold is
+ * crossed. Both arms previously inlined the same four-step shape.
+ */
+const finalizeScans = (input: FinalizeScansInput): void => {
+  if (input.isJsonMode) {
+    writeJsonReport(
+      buildJsonReport({
+        version: VERSION,
+        directory: input.resolvedDirectory,
+        mode: input.mode,
+        diff: input.diff,
+        scans: input.completedScans,
+        totalElapsedMilliseconds: performance.now() - input.startTime,
+      }),
+    );
+  }
+
+  if (input.flags.annotations) {
+    printAnnotations(input.diagnostics, input.isJsonMode);
+  }
+
+  const ciFailureDiagnostics = filterDiagnosticsForSurface(
+    input.diagnostics,
+    "ciFailure",
+    input.userConfig,
+  );
+  if (
+    !input.isScoreOnly &&
+    shouldFailForDiagnostics(
+      ciFailureDiagnostics,
+      resolveFailOnLevel(input.flags, input.userConfig),
+    )
+  ) {
+    process.exitCode = 1;
+  }
+};
 
 export const inspectAction = async (directory: string, flags: InspectFlags): Promise<void> => {
   const isScoreOnly = Boolean(flags.score);
@@ -127,40 +192,24 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
             ? diagnostic.filePath.replaceAll(snapshot.tempDirectory, resolvedDirectory)
             : diagnostic.filePath,
         }));
+        const remappedInspectResult: InspectResult = {
+          ...scanResult,
+          diagnostics: remappedDiagnostics,
+          project: { ...scanResult.project, rootDirectory: resolvedDirectory },
+        };
 
-        if (isJsonMode) {
-          const remappedInspectResult: InspectResult = {
-            ...scanResult,
-            diagnostics: remappedDiagnostics,
-            project: { ...scanResult.project, rootDirectory: resolvedDirectory },
-          };
-          writeJsonReport(
-            buildJsonReport({
-              version: VERSION,
-              directory: resolvedDirectory,
-              mode: "staged",
-              diff: null,
-              scans: [{ directory: resolvedDirectory, result: remappedInspectResult }],
-              totalElapsedMilliseconds: performance.now() - startTime,
-            }),
-          );
-        }
-
-        if (flags.annotations) {
-          printAnnotations(remappedDiagnostics, isJsonMode);
-        }
-
-        const ciFailureDiagnostics = filterDiagnosticsForSurface(
-          remappedDiagnostics,
-          "ciFailure",
+        finalizeScans({
+          diagnostics: remappedDiagnostics,
+          completedScans: [{ directory: resolvedDirectory, result: remappedInspectResult }],
+          mode: "staged",
+          diff: null,
+          isJsonMode,
+          isScoreOnly,
+          flags,
           userConfig,
-        );
-        if (
-          !isScoreOnly &&
-          shouldFailForDiagnostics(ciFailureDiagnostics, resolveFailOnLevel(flags, userConfig))
-        ) {
-          process.exitCode = 1;
-        }
+          resolvedDirectory,
+          startTime,
+        });
       } finally {
         snapshot.cleanup();
       }
@@ -236,34 +285,18 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
       }
     }
 
-    if (isJsonMode) {
-      writeJsonReport(
-        buildJsonReport({
-          version: VERSION,
-          directory: resolvedDirectory,
-          mode: isDiffMode ? "diff" : "full",
-          diff: isDiffMode ? diffInfo : null,
-          scans: completedScans,
-          totalElapsedMilliseconds: performance.now() - startTime,
-        }),
-      );
-    }
-
-    if (flags.annotations) {
-      printAnnotations(allDiagnostics, isJsonMode);
-    }
-
-    const ciFailureDiagnostics = filterDiagnosticsForSurface(
-      allDiagnostics,
-      "ciFailure",
+    finalizeScans({
+      diagnostics: allDiagnostics,
+      completedScans,
+      mode: isDiffMode ? "diff" : "full",
+      diff: isDiffMode ? diffInfo : null,
+      isJsonMode,
+      isScoreOnly,
+      flags,
       userConfig,
-    );
-    if (
-      !isScoreOnly &&
-      shouldFailForDiagnostics(ciFailureDiagnostics, resolveFailOnLevel(flags, userConfig))
-    ) {
-      process.exitCode = 1;
-    }
+      resolvedDirectory,
+      startTime,
+    });
 
     const setupProjectRoot = resolveInstallSetupProjectRoot({
       scanRoot: resolvedDirectory,
