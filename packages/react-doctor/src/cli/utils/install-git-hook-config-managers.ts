@@ -16,30 +16,6 @@ import {
 } from "./git-hook-types.js";
 import { removeLegacyManagedRunner } from "./install-git-hook-file.js";
 
-export const installSimpleGitHooks = (options: InstallGitHookOptions): InstallGitHookResult => {
-  const packageJsonPath = getPackageJsonPath(options.projectRoot);
-  const didHookExist = existsSync(packageJsonPath);
-  const packageJson = readPackageJson(options.projectRoot);
-  const nextPackageJson = isRecord(packageJson) ? { ...packageJson } : {};
-  const existingConfig = nextPackageJson["simple-git-hooks"];
-  const nextConfig = isRecord(existingConfig) ? { ...existingConfig } : {};
-  const existingPreCommit =
-    typeof nextConfig["pre-commit"] === "string" ? nextConfig["pre-commit"] : "";
-  const nextPreCommit = existingPreCommit.includes(REACT_DOCTOR_COMMAND)
-    ? existingPreCommit
-    : [existingPreCommit, NON_BLOCKING_REACT_DOCTOR_COMMAND].filter(Boolean).join("\n");
-  nextConfig["pre-commit"] = nextPreCommit;
-  nextPackageJson["simple-git-hooks"] = nextConfig;
-  writeJsonFile(packageJsonPath, nextPackageJson);
-  removeLegacyManagedRunner(options.projectRoot);
-
-  return {
-    hookPath: packageJsonPath,
-    kind: GitHookKind.SimpleGitHooks,
-    status: didHookExist ? "updated" : "created",
-  };
-};
-
 const appendStringCommand = (existingCommand: unknown): string => {
   const existingCommandText =
     typeof existingCommand === "string"
@@ -63,66 +39,102 @@ const appendArrayCommand = (existingCommands: unknown): string[] => {
     : [...commands, NON_BLOCKING_REACT_DOCTOR_COMMAND];
 };
 
-export const installPackageJsonPreCommitString = (
+interface PackageJsonHookStrategy {
+  readonly kind: GitHookKind;
+  /**
+   * Dotted path of keys into `package.json` to reach the leaf where
+   * the pre-commit command lives. `["simple-git-hooks", "pre-commit"]`
+   * walks `package.json["simple-git-hooks"]["pre-commit"]`. Intermediate
+   * objects are created when missing; non-record intermediates are
+   * replaced with a fresh empty object.
+   */
+  readonly path: ReadonlyArray<string>;
+  /**
+   * Shape of the leaf value the manager expects. `"string"` joins
+   * commands with newlines (the shape simple-git-hooks / ghooks /
+   * yorkie / pretty-quick / git-hooks-js use); `"array"` keeps each
+   * command as a separate string element (the shape pre-commit-npm
+   * uses).
+   */
+  readonly leafShape: "string" | "array";
+}
+
+const installPackageJsonHook = (
   options: InstallGitHookOptions,
-  kind: GitHookKind,
-  configKey: string,
+  strategy: PackageJsonHookStrategy,
 ): InstallGitHookResult => {
   const packageJsonPath = getPackageJsonPath(options.projectRoot);
   const didHookExist = existsSync(packageJsonPath);
   const packageJson = readPackageJson(options.projectRoot);
   const nextPackageJson = isRecord(packageJson) ? { ...packageJson } : {};
-  const existingConfig = nextPackageJson[configKey];
-  const nextConfig = isRecord(existingConfig) ? { ...existingConfig } : {};
-  nextConfig["pre-commit"] = appendStringCommand(nextConfig["pre-commit"]);
-  nextPackageJson[configKey] = nextConfig;
+
+  // Walk down to the parent of the leaf, cloning each intermediate
+  // record so the original package.json shape isn't mutated in place
+  // (writeJsonFile re-serializes the new tree).
+  const parentKeys = strategy.path.slice(0, -1);
+  const leafKey = strategy.path[strategy.path.length - 1];
+  let parent: Record<string, unknown> = nextPackageJson;
+  for (const key of parentKeys) {
+    const existing = parent[key];
+    const cloned = isRecord(existing) ? { ...existing } : {};
+    parent[key] = cloned;
+    parent = cloned;
+  }
+  parent[leafKey] =
+    strategy.leafShape === "array"
+      ? appendArrayCommand(parent[leafKey])
+      : appendStringCommand(parent[leafKey]);
+
   writeJsonFile(packageJsonPath, nextPackageJson);
   removeLegacyManagedRunner(options.projectRoot);
   return {
     hookPath: packageJsonPath,
-    kind,
+    kind: strategy.kind,
     status: didHookExist ? "updated" : "created",
   };
 };
 
-export const installGhooks = (options: InstallGitHookOptions): InstallGitHookResult => {
-  const packageJsonPath = getPackageJsonPath(options.projectRoot);
-  const didHookExist = existsSync(packageJsonPath);
-  const packageJson = readPackageJson(options.projectRoot);
-  const nextPackageJson = isRecord(packageJson) ? { ...packageJson } : {};
-  const existingConfig = nextPackageJson.config;
-  const nextConfig = isRecord(existingConfig) ? { ...existingConfig } : {};
-  const existingGhooks = nextConfig.ghooks;
-  const nextGhooks = isRecord(existingGhooks) ? { ...existingGhooks } : {};
-  nextGhooks["pre-commit"] = appendStringCommand(nextGhooks["pre-commit"]);
-  nextConfig.ghooks = nextGhooks;
-  nextPackageJson.config = nextConfig;
-  writeJsonFile(packageJsonPath, nextPackageJson);
-  removeLegacyManagedRunner(options.projectRoot);
-  return {
-    hookPath: packageJsonPath,
+export const installSimpleGitHooks = (options: InstallGitHookOptions): InstallGitHookResult =>
+  installPackageJsonHook(options, {
+    kind: GitHookKind.SimpleGitHooks,
+    path: ["simple-git-hooks", "pre-commit"],
+    leafShape: "string",
+  });
+
+export const installGhooks = (options: InstallGitHookOptions): InstallGitHookResult =>
+  installPackageJsonHook(options, {
     kind: GitHookKind.Ghooks,
-    status: didHookExist ? "updated" : "created",
-  };
-};
+    path: ["config", "ghooks", "pre-commit"],
+    leafShape: "string",
+  });
 
-export const installPreCommitNpm = (options: InstallGitHookOptions): InstallGitHookResult => {
-  const packageJsonPath = getPackageJsonPath(options.projectRoot);
-  const didHookExist = existsSync(packageJsonPath);
-  const packageJson = readPackageJson(options.projectRoot);
-  const nextPackageJson = isRecord(packageJson) ? { ...packageJson } : {};
-  nextPackageJson["pre-commit"] = appendArrayCommand(nextPackageJson["pre-commit"]);
-  writeJsonFile(packageJsonPath, nextPackageJson);
-  removeLegacyManagedRunner(options.projectRoot);
-  return {
-    hookPath: packageJsonPath,
+export const installPreCommitNpm = (options: InstallGitHookOptions): InstallGitHookResult =>
+  installPackageJsonHook(options, {
     kind: GitHookKind.PreCommitNpm,
-    status: didHookExist ? "updated" : "created",
-  };
-};
+    path: ["pre-commit"],
+    leafShape: "array",
+  });
 
 export const installPrettyQuick = (options: InstallGitHookOptions): InstallGitHookResult =>
-  installPackageJsonPreCommitString(options, GitHookKind.PrettyQuick, "gitHooks");
+  installPackageJsonHook(options, {
+    kind: GitHookKind.PrettyQuick,
+    path: ["gitHooks", "pre-commit"],
+    leafShape: "string",
+  });
+
+export const installYorkie = (options: InstallGitHookOptions): InstallGitHookResult =>
+  installPackageJsonHook(options, {
+    kind: GitHookKind.Yorkie,
+    path: ["gitHooks", "pre-commit"],
+    leafShape: "string",
+  });
+
+export const installGitHooksJs = (options: InstallGitHookOptions): InstallGitHookResult =>
+  installPackageJsonHook(options, {
+    kind: GitHookKind.GitHooksJs,
+    path: ["git-hooks", "pre-commit"],
+    leafShape: "string",
+  });
 
 const appendIndentedBlockToTopLevelSection = (
   content: string,

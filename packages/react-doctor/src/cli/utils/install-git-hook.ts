@@ -27,13 +27,14 @@ import {
 } from "./git-hook-types.js";
 import {
   installGhooks,
+  installGitHooksJs,
   installLefthook,
   installOvercommit,
-  installPackageJsonPreCommitString,
   installPreCommit,
   installPreCommitNpm,
   installPrettyQuick,
   installSimpleGitHooks,
+  installYorkie,
 } from "./install-git-hook-config-managers.js";
 import { installDirectGitHook } from "./install-git-hook-file.js";
 
@@ -213,11 +214,9 @@ export const installReactDoctorGitHook = (options: InstallGitHookOptions): Insta
   if (options.kind === GitHookKind.Lefthook) return installLefthook(options);
   if (options.kind === GitHookKind.PreCommit) return installPreCommit(options);
   if (options.kind === GitHookKind.Overcommit) return installOvercommit(options);
-  if (options.kind === GitHookKind.Yorkie)
-    return installPackageJsonPreCommitString(options, GitHookKind.Yorkie, "gitHooks");
+  if (options.kind === GitHookKind.Yorkie) return installYorkie(options);
   if (options.kind === GitHookKind.Ghooks) return installGhooks(options);
-  if (options.kind === GitHookKind.GitHooksJs)
-    return installPackageJsonPreCommitString(options, GitHookKind.GitHooksJs, "git-hooks");
+  if (options.kind === GitHookKind.GitHooksJs) return installGitHooksJs(options);
   if (options.kind === GitHookKind.PreCommitNpm) return installPreCommitNpm(options);
   if (options.kind === GitHookKind.PrettyQuick) return installPrettyQuick(options);
   return installDirectGitHook(options);
