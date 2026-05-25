@@ -8,8 +8,7 @@ import {
   filterDiagnosticsForSurface,
   getDiffInfo,
   highlighter,
-  loadConfigWithSource,
-  resolveConfigRootDir,
+  resolveScanTarget,
   toRelativePath,
 } from "@react-doctor/core";
 import { inspect } from "../../inspect.js";
@@ -58,15 +57,11 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
   try {
     validateModeFlags(flags);
 
-    const loadedConfig = loadConfigWithSource(requestedDirectory);
-    const userConfig = loadedConfig?.config ?? null;
-    const redirectedDirectory = resolveConfigRootDir(
-      loadedConfig?.config ?? null,
-      loadedConfig?.sourceDirectory ?? null,
-    );
-    const resolvedDirectory = redirectedDirectory ?? requestedDirectory;
+    const scanTarget = resolveScanTarget(requestedDirectory);
+    const userConfig = scanTarget.userConfig;
+    const resolvedDirectory = scanTarget.resolvedDirectory;
     setJsonReportDirectory(resolvedDirectory);
-    if (redirectedDirectory && !isQuiet) {
+    if (scanTarget.didRedirectViaRootDir && !isQuiet) {
       logger.dim(
         `Redirected to ${highlighter.info(toRelativePath(resolvedDirectory, requestedDirectory))} via react-doctor config "rootDir".`,
       );

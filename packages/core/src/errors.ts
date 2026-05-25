@@ -1,5 +1,11 @@
 import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import {
+  AmbiguousProjectError,
+  NoReactDependencyError,
+  ProjectNotFoundError,
+} from "./project-info/errors.js";
 
 const OxlintUnavailableKind = Schema.Literals(["binary-not-found", "native-binding-missing"]);
 
@@ -186,3 +192,39 @@ export const isSplittableReactDoctorError = (error: unknown): error is ReactDoct
 
 export const isReactDoctorError = (error: unknown): error is ReactDoctorError =>
   error instanceof ReactDoctorError;
+
+/**
+ * Tagged-reason → legacy thrown-class boundary shared by every public
+ * shell (`inspect()` in `react-doctor`, `diagnose()` in `@react-doctor/api`).
+ *
+ * `Effect.catchReasons` dispatches on the tagged-error sub-channel
+ * without manual `instanceof` checks. Each handler converts a tagged
+ * reason into the historical thrown class advertised by the legacy
+ * public-API contract (via `Effect.die`, which `Effect.runPromise`
+ * re-throws unchanged). The `orElse` branch re-`die`s the original
+ * `ReactDoctorError` instance so advanced callers can still narrow on
+ * `error.reason._tag` while grep-stderr users keep the same
+ * `error.message` they always saw.
+ *
+ * Adding a new legacy thrown class is a one-line change on the
+ * `Effect.catchReasons` map — both shells pick it up automatically.
+ */
+export const restoreLegacyThrow = <Value, Requirements>(
+  effect: Effect.Effect<Value, ReactDoctorError, Requirements>,
+): Effect.Effect<Value, never, Requirements> =>
+  effect.pipe(
+    Effect.catchReasons(
+      "ReactDoctorError",
+      {
+        NoReactDependency: (reason) => Effect.die(new NoReactDependencyError(reason.directory)),
+        ProjectNotFound: (reason) => Effect.die(new ProjectNotFoundError(reason.directory)),
+        AmbiguousProject: (reason) =>
+          Effect.die(new AmbiguousProjectError(reason.directory, [...reason.candidates])),
+      },
+      // Re-die the tagged class itself — its `message` getter is the
+      // same one the legacy `new Error(error.message)` path produced,
+      // and keeping the tagged shape lets advanced callers do
+      // `_tag` dispatch on `error.reason`.
+      (_reason, error) => Effect.die(error),
+    ),
+  );

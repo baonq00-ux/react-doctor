@@ -6,19 +6,13 @@ import {
   filterDiagnosticsForSurface,
   highlighter,
   layerOtlp,
-  loadConfigWithSource,
   OXLINT_NODE_REQUIREMENT,
-  ReactDoctorError,
-  resolveConfigRootDir,
+  resolveScanTarget,
+  restoreLegacyThrow,
   runInspect as runInspectEffect,
   type ReactDoctorErrorReason,
 } from "@react-doctor/core";
 import { buildRuntimeLayers } from "./cli/utils/build-runtime-layers.js";
-import {
-  AmbiguousProjectError,
-  NoReactDependencyError,
-  ProjectNotFoundError,
-} from "@react-doctor/core";
 import type {
   Diagnostic,
   DiagnosticSurface,
@@ -105,38 +99,6 @@ const mergeInspectOptions = (
   outputSurface: inputOptions.outputSurface ?? "cli",
 });
 
-/**
- * Tagged-reason → legacy-class dispatch for the public `inspect()`
- * contract. Each case converts a `ReactDoctorError` reason into the
- * historical thrown class (`NoReactDependencyError`, …) via
- * `Effect.die`, which `Effect.runPromise` re-throws unchanged.
- * Unmatched reasons (GitInvocationFailed, OxlintSpawnFailed, …)
- * flow through as the original tagged `ReactDoctorError` instance.
- *
- * Adding a new public thrown class is one new entry on this object
- * — no `instanceof` checks, no `switch` ladder. The function form
- * (vs. the standalone constant) is required so `Effect.catchReasons`
- * gets the surrounding Effect's error channel for type inference.
- */
-const restoreLegacyThrow = <Value, Requirements>(
-  effect: Effect.Effect<Value, ReactDoctorError, Requirements>,
-): Effect.Effect<Value, never, Requirements> =>
-  effect.pipe(
-    Effect.catchReasons(
-      "ReactDoctorError",
-      {
-        NoReactDependency: (reason) => Effect.die(new NoReactDependencyError(reason.directory)),
-        ProjectNotFound: (reason) => Effect.die(new ProjectNotFoundError(reason.directory)),
-        AmbiguousProject: (reason) =>
-          Effect.die(new AmbiguousProjectError(reason.directory, [...reason.candidates])),
-      },
-      // Legacy contract: any other tagged reason surfaces as a
-      // plain `Error` carrying the tagged-class message string, so
-      // callers that grep `error.message` continue to work.
-      (_reason, error) => Effect.die(new Error(error.message)),
-    ),
-  );
-
 export const inspect = async (
   directory: string,
   inputOptions: InspectOptions = {},
@@ -144,7 +106,13 @@ export const inspect = async (
   const startTime = performance.now();
 
   const hasConfigOverride = inputOptions.configOverride !== undefined;
-  let scanDirectory = directory;
+  // When the caller pre-loaded a config (CLI's `inspectAction` does
+  // this so it can render the rootDir-redirect hint before the scan
+  // starts), use it verbatim. Otherwise, run the canonical scan-target
+  // resolver: load the on-disk config, honor `rootDir`, and walk
+  // into a nested React subproject if the requested directory itself
+  // lacks a package.json.
+  let scanDirectory: string;
   let userConfig: ReactDoctorConfig | null;
   // Source directory of the config file that supplied `userConfig`,
   // when one was loaded from disk. Drives the resolution base for
@@ -153,18 +121,16 @@ export const inspect = async (
   // post-`rootDir` scan root. `null` when the caller passed
   // `configOverride` programmatically, in which case the runner
   // falls back to the scan root for plugin resolution.
-  let configSourceDirectory: string | null = null;
+  let configSourceDirectory: string | null;
   if (hasConfigOverride) {
+    scanDirectory = directory;
     userConfig = inputOptions.configOverride ?? null;
+    configSourceDirectory = null;
   } else {
-    const loadedConfig = loadConfigWithSource(directory);
-    const redirectedDirectory = resolveConfigRootDir(
-      loadedConfig?.config ?? null,
-      loadedConfig?.sourceDirectory ?? null,
-    );
-    if (redirectedDirectory) scanDirectory = redirectedDirectory;
-    userConfig = loadedConfig?.config ?? null;
-    configSourceDirectory = loadedConfig?.sourceDirectory ?? null;
+    const scanTarget = resolveScanTarget(directory);
+    scanDirectory = scanTarget.resolvedDirectory;
+    userConfig = scanTarget.userConfig;
+    configSourceDirectory = scanTarget.configSourceDirectory;
   }
 
   const options = mergeInspectOptions(inputOptions, userConfig);
