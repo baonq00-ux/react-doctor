@@ -1,5 +1,6 @@
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import type { Rule } from "../../utils/rule.js";
 import type { RuleContext } from "../../utils/rule-context.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
@@ -54,11 +55,7 @@ export const jsHoistIntl = defineRule<Rule>({
       let cursor: EsTreeNode | null = node.parent ?? null;
       let inFunctionBody = false;
       while (cursor) {
-        if (
-          isNodeOfType(cursor, "FunctionDeclaration") ||
-          isNodeOfType(cursor, "FunctionExpression") ||
-          isNodeOfType(cursor, "ArrowFunctionExpression")
-        ) {
+        if (isFunctionLike(cursor)) {
           inFunctionBody = true;
           // Detect the `useMemo(() => …)` / `useCallback(() => …)` shape:
           // the function is the first argument of a CallExpression whose

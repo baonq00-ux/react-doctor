@@ -1,5 +1,6 @@
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import type { Rule } from "../../utils/rule.js";
 import type { RuleContext } from "../../utils/rule-context.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
@@ -61,11 +62,7 @@ const isInsideLoopContext = (node: EsTreeNode): boolean => {
     ) {
       return true;
     }
-    if (
-      isNodeOfType(current, "ArrowFunctionExpression") ||
-      isNodeOfType(current, "FunctionExpression") ||
-      isNodeOfType(current, "FunctionDeclaration")
-    ) {
+    if (isFunctionLike(current)) {
       if (isIteratorCallback(current)) return true;
       return false;
     }

@@ -1,4 +1,5 @@
 import { defineRule } from "../../utils/define-rule.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isUppercaseName } from "../../utils/is-uppercase-name.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { Rule } from "../../utils/rule.js";
@@ -30,11 +31,7 @@ const isInsideClassBody = (node: EsTreeNode): boolean => {
   let current = node.parent;
   while (current) {
     if (isNodeOfType(current, "ClassBody")) return true;
-    if (
-      isNodeOfType(current, "FunctionDeclaration") ||
-      isNodeOfType(current, "FunctionExpression") ||
-      isNodeOfType(current, "ArrowFunctionExpression")
-    ) {
+    if (isFunctionLike(current)) {
       return false;
     }
     current = current.parent;

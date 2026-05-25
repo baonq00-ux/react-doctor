@@ -10,6 +10,7 @@ import { defineRule } from "../../utils/define-rule.js";
 import { findSideEffect } from "../../utils/find-side-effect.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { Rule } from "../../utils/rule.js";
 import type { RuleContext } from "../../utils/rule-context.js";
@@ -125,11 +126,7 @@ const resolveBodiesFromExpression = (
 ): EsTreeNode[] => {
   if (remainingDepth <= 0) return [];
 
-  if (
-    isNodeOfType(expression, "ArrowFunctionExpression") ||
-    isNodeOfType(expression, "FunctionExpression") ||
-    isNodeOfType(expression, "FunctionDeclaration")
-  ) {
+  if (isFunctionLike(expression)) {
     return expression.body ? [expression.body] : [];
   }
 

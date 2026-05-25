@@ -2,6 +2,7 @@ import { INTENTIONAL_SEQUENCING_CALLEE_NAMES } from "../../constants/js.js";
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { Rule } from "../../utils/rule.js";
 import type { RuleContext } from "../../utils/rule-context.js";
@@ -11,12 +12,7 @@ const findFirstAwaitOutsideNestedFunctions = (block: EsTreeNode): EsTreeNode | n
   let firstAwait: EsTreeNode | null = null;
   walkAst(block, (child: EsTreeNode): boolean | void => {
     if (firstAwait) return false;
-    if (
-      child !== block &&
-      (isNodeOfType(child, "FunctionDeclaration") ||
-        isNodeOfType(child, "FunctionExpression") ||
-        isNodeOfType(child, "ArrowFunctionExpression"))
-    ) {
+    if (child !== block && isFunctionLike(child)) {
       // Don't descend into nested functions — their `await`s belong to
       // their own async parent, not this loop. (`child !== block` so we
       // still walk the body of the loop callback itself when called with
