@@ -1,6 +1,7 @@
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { flattenCalleeName } from "../../utils/flatten-callee-name.js";
 import { flattenJsxName } from "../../utils/flatten-jsx-name.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import { isReactFunctionCall } from "../../utils/is-react-function-call.js";
@@ -34,15 +35,9 @@ const resolveSettings = (
   return map;
 };
 
-const flattenMemberName = (node: EsTreeNode): string | null => {
-  if (isNodeOfType(node, "Identifier")) return node.name;
-  if (isNodeOfType(node, "MemberExpression")) {
-    const objectName = flattenMemberName(node.object);
-    if (!objectName || !isNodeOfType(node.property, "Identifier")) return null;
-    return `${objectName}.${node.property.name}`;
-  }
-  return null;
-};
+// Member-chain flattening for JS expressions (e.g. `React.Fragment`,
+// `Module.Component`) reuses the canonical `flattenCalleeName` helper.
+const flattenMemberName = flattenCalleeName;
 
 // Port of `oxc_linter::rules::react::forbid_elements`. Driven by a
 // settings list — `forbid: ["button", { element: "Modal", message: "use
