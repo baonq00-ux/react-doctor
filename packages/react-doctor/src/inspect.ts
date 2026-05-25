@@ -27,7 +27,9 @@ import type {
   ReactDoctorConfig,
   ScoreResult,
 } from "@react-doctor/core";
+import { printAgentGuidance } from "./cli/utils/render-agent-guidance.js";
 import { printDiagnostics } from "./cli/utils/render-diagnostics.js";
+import { isNonInteractiveEnvironment } from "./cli/utils/is-non-interactive-environment.js";
 import { printProjectDetection } from "./cli/utils/render-project-detection.js";
 import {
   printBrandingOnlyHeader,
@@ -62,6 +64,7 @@ interface ResolvedInspectOptions {
   scoreOnly: boolean;
   noScore: boolean;
   isCi: boolean;
+  isNonInteractiveEnvironment: boolean;
   silent: boolean;
   includePaths: string[];
   customRulesOnly: boolean;
@@ -90,6 +93,7 @@ const mergeInspectOptions = (
   scoreOnly: inputOptions.scoreOnly ?? false,
   noScore: inputOptions.noScore ?? userConfig?.noScore ?? false,
   isCi: inputOptions.isCi ?? false,
+  isNonInteractiveEnvironment: isNonInteractiveEnvironment(),
   silent: inputOptions.silent ?? false,
   includePaths: inputOptions.includePaths ?? [],
   customRulesOnly: userConfig?.customRulesOnly ?? false,
@@ -490,6 +494,9 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
 
     yield* Console.log("");
     yield* printDiagnostics([...surfaceDiagnostics], options.verbose, directory);
+    if (options.isNonInteractiveEnvironment && options.outputSurface !== "prComment") {
+      yield* printAgentGuidance();
+    }
 
     if (demotedDiagnosticCount > 0) {
       yield* Console.log(

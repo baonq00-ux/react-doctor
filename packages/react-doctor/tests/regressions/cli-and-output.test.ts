@@ -24,11 +24,16 @@ import {
   encodeAnnotationProperty,
   encodeAnnotationMessage,
 } from "../../src/cli/utils/annotation-encoding.js";
+import { NON_INTERACTIVE_ENVIRONMENT_VARIABLES } from "../../src/cli/utils/is-non-interactive-environment.js";
 import { setupReactProject, writeFile, writeJson } from "./_helpers.js";
 
 const PACKAGE_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rd-cli-and-output-"));
 const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001B\[[0-?]*[ -/]*[@-~]`, "g");
+
+interface EnvironmentVariableValues {
+  [environmentVariableName: string]: string | undefined;
+}
 
 afterAll(() => {
   fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -40,6 +45,37 @@ const setupMinimalReactProject = (caseId: string): string =>
   });
 
 const stripAnsi = (text: string): string => text.replace(ANSI_ESCAPE_PATTERN, "");
+
+const withAutomatedEnvironmentVariables = async <Value>(
+  overrides: EnvironmentVariableValues,
+  callback: () => Promise<Value>,
+): Promise<Value> => {
+  const savedEnvironment: EnvironmentVariableValues = {};
+  for (const environmentVariableName of NON_INTERACTIVE_ENVIRONMENT_VARIABLES) {
+    savedEnvironment[environmentVariableName] = process.env[environmentVariableName];
+    delete process.env[environmentVariableName];
+  }
+  for (const [environmentVariableName, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete process.env[environmentVariableName];
+    } else {
+      process.env[environmentVariableName] = value;
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const environmentVariableName of NON_INTERACTIVE_ENVIRONMENT_VARIABLES) {
+      const previousValue = savedEnvironment[environmentVariableName];
+      if (previousValue === undefined) {
+        delete process.env[environmentVariableName];
+      } else {
+        process.env[environmentVariableName] = previousValue;
+      }
+    }
+  }
+};
 
 // Capture every line `inspect()` writes to console while it runs. We use
 // real I/O (logger / spinner / console.log) rather than scrub source
@@ -187,11 +223,13 @@ export const Cart = () => {
       },
     });
 
-    const { stdout } = await captureScanOutput(projectDir, {
-      lint: true,
-      noScore: true,
-    });
-    const normalizedStdout = stripAnsi(stdout);
+    const localRun = await withAutomatedEnvironmentVariables({}, () =>
+      captureScanOutput(projectDir, {
+        lint: true,
+        noScore: true,
+      }),
+    );
+    const normalizedStdout = stripAnsi(localRun.stdout);
 
     expect(normalizedStdout).toMatch(/State & Effects \d+ issues/);
     expect(normalizedStdout).toContain("  ⚠ Direct state mutation ×2");
@@ -199,7 +237,86 @@ export const Cart = () => {
     expect(normalizedStdout.indexOf("Direct state mutation")).toBeLessThan(
       normalizedStdout.indexOf("React Doctor"),
     );
+    expect(normalizedStdout).not.toContain("Agent guidance");
     expect(normalizedStdout).not.toContain("  By category");
+  });
+
+  it("prints agent guidance in automated environments", async () => {
+    const projectDir = setupReactProject(tempRoot, "automated-output-agent-guidance", {
+      files: {
+        "src/Cart.tsx": `import { useState } from "react";
+
+export const Cart = () => {
+  const [items, setItems] = useState<string[]>([]);
+  void setItems;
+
+  const onAdd = (nextItem: string) => {
+    items.push(nextItem);
+  };
+
+  return <button onClick={() => onAdd("x")}>{items.length}</button>;
+};
+`,
+      },
+    });
+
+    const automatedRun = await withAutomatedEnvironmentVariables({ CURSOR_AGENT: "1" }, () =>
+      captureScanOutput(projectDir, {
+        lint: true,
+        noScore: true,
+      }),
+    );
+    const normalizedStdout = stripAnsi(automatedRun.stdout);
+
+    expect(normalizedStdout).toContain("Agent guidance");
+    expect(normalizedStdout).toContain(
+      "  - Treat React Doctor diagnostics as starting hypotheses.",
+    );
+    expect(normalizedStdout).toContain("Confidence requires code context.");
+    expect(normalizedStdout).toContain(
+      "Fix the underlying code instead of changing react-doctor config",
+    );
+    expect(normalizedStdout).toContain("race conditions, security-sensitive flows");
+    expect(normalizedStdout).toContain("theoretical issues without real impact");
+    expect(normalizedStdout).toContain("npx react-doctor@latest --verbose --diff");
+    expect(normalizedStdout).toContain(
+      "  - Split unrelated, broad, or behavior-changing work into separate PRs/branches",
+    );
+    expect(normalizedStdout).toContain("  - When available, spawn subagents or isolated worktrees");
+    expect(normalizedStdout).toContain("  - If a fix needs an API, UX, or architecture decision");
+    expect(normalizedStdout.indexOf("Agent guidance")).toBeLessThan(
+      normalizedStdout.indexOf("React Doctor"),
+    );
+  });
+
+  it("does not print agent guidance in PR comment output", async () => {
+    const projectDir = setupReactProject(tempRoot, "pr-comment-output-agent-guidance", {
+      files: {
+        "src/Cart.tsx": `import { useState } from "react";
+
+export const Cart = () => {
+  const [items, setItems] = useState<string[]>([]);
+  void setItems;
+
+  const onAdd = (nextItem: string) => {
+    items.push(nextItem);
+  };
+
+  return <button onClick={() => onAdd("x")}>{items.length}</button>;
+};
+`,
+      },
+    });
+
+    const automatedRun = await withAutomatedEnvironmentVariables({ GITHUB_ACTIONS: "true" }, () =>
+      captureScanOutput(projectDir, {
+        lint: true,
+        noScore: true,
+        outputSurface: "prComment",
+      }),
+    );
+
+    expect(stripAnsi(automatedRun.stdout)).not.toContain("Agent guidance");
   });
 });
 
