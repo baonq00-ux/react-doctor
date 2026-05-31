@@ -3,12 +3,24 @@
 // (the project-discovery subtree). Re-exported here so core
 // consumers don't have to know which subtree owns each constant.
 export {
+  GENERATED_BUNDLE_FILE_PATTERN,
   GIT_LS_FILES_MAX_BUFFER_BYTES,
   IGNORED_DIRECTORIES,
+  MINIFIED_AVG_LINE_LENGTH_CHARS,
+  MINIFIED_MAX_LINE_LENGTH_CHARS,
+  MINIFIED_MIN_SIZE_BYTES,
+  MINIFIED_SNIFF_BYTES,
   SOURCE_FILE_PATTERN,
 } from "./project-info/constants.js";
 
 export const JSX_FILE_PATTERN = /\.(tsx|jsx)$/;
+
+// Whether `"warning"`-severity diagnostics surface when neither the
+// caller (`--warnings` / `warnings:`) nor `config.warnings` decide.
+// Warnings are hidden by default so a clean scan reports only
+// `"error"`-severity findings; users opt them in with `--warnings`
+// or `"warnings": true`.
+export const DEFAULT_SHOW_WARNINGS = false;
 
 export const MILLISECONDS_PER_SECOND = 1000;
 
@@ -64,7 +76,7 @@ export const SCORE_API_URL = "https://www.react.doctor/api/score";
 
 export const ENTERPRISE_CONTACT_URL = "https://react.doctor/enterprise";
 
-export const SHARE_BASE_URL = "https://www.react.doctor/share";
+export const SHARE_BASE_URL = "https://react.doctor/share";
 
 // Base URL for the per-rule fix recipes the `/doctor` playbook fetches
 // on demand. The full URL for one rule is
@@ -148,6 +160,15 @@ export const OXLINT_SPAWN_TIMEOUT_MS = 60_000;
 
 export const DEAD_CODE_WORKER_TIMEOUT_MS = 120_000;
 
+// deslop's semantic pass builds a full TypeScript program and walks
+// every identifier through the type checker. On type-heavy projects
+// (large tRPC routers, Effect/Zod schemas, deep generics) the checker
+// instantiates enormous types and the child can exceed Node's default
+// ~4 GB heap, dying with an uncatchable "heap out of memory" — which
+// surfaces as a silent "Scanning failed (dead-code analysis)". Raise
+// the child's heap so those projects complete instead of crashing.
+export const DEAD_CODE_WORKER_MAX_OLD_SPACE_MB = 8192;
+
 // HACK: lookahead cap for JSX opener-span scanning; bounds worst-case
 // work on pathological files. Real openers stay well under this.
 export const JSX_OPENER_SCAN_MAX_LINES = 32;
@@ -173,7 +194,51 @@ export const RECOMMENDED_PNPM_MINIMUM_RELEASE_AGE_MINUTES = 10_080;
 // consistent column even when one rule has a much longer identifier.
 export const RULE_NAME_COLUMN_WIDTH_CHARS = 36;
 
+// The closed set of user-facing diagnostic categories. Every rule
+// (collapsed at codegen via `CATEGORY_BUCKET` in
+// `generate-rule-registry.mjs`) and every directly-constructed
+// diagnostic (dead-code, reduced-motion, pnpm-hardening) must report one
+// of these — the renderer, JSON output, and `categories` severity
+// overrides all assume this set is exhaustive. `rule-metadata.test.ts`
+// asserts the registry never drifts outside it.
+export const DIAGNOSTIC_CATEGORY_BUCKETS = [
+  "Security",
+  "Bugs",
+  "Performance",
+  "Accessibility",
+  "Maintainability",
+] as const;
+
+// How many of the highest-priority error rules to surface in the
+// "Top N errors you should fix" header above the category breakdown.
+export const TOP_ERRORS_DISPLAY_COUNT = 3;
+
+// Source-context window rendered around each top-error site in the
+// inline code frame (lines above / below the offending line).
+export const CODE_FRAME_LINES_ABOVE = 1;
+export const CODE_FRAME_LINES_BELOW = 1;
+
+// Skip rendering an inline code frame when the offending source line is
+// longer than this — a single huge line (minified output, a giant inline
+// data literal) only produces an unreadable wall of text in the terminal,
+// so we fall back to the bare `file:line` reference instead.
+export const CODE_FRAME_MAX_LINE_LENGTH_CHARS = 200;
+
+// When one rule hits several sites in the same file, sites whose frames
+// would overlap are merged into a single spanning frame instead of
+// rendering near-duplicate boxes. Two sites merge when the gap between
+// their lines is within this window (the frame's own context reach), and
+// a merged frame never spans more offending lines than the max below — a
+// long contiguous run is split into a few bounded frames rather than one
+// giant wall.
+export const CODE_FRAME_BATCH_MAX_SPAN_LINES = 20;
+
 export const OUTPUT_DETAIL_WRAP_WIDTH_CHARS = 88;
+
+// Typographic "measure" — the line length (in characters) we wrap
+// prose explanations to for comfortable reading. Kept short (well under
+// the terminal width) so multi-line blurbs stay easy to scan.
+export const OUTPUT_MEASURE_WIDTH_CHARS = 60;
 
 export const SPINNER_INDENT_CHARS = 0;
 

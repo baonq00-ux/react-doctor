@@ -19,9 +19,10 @@ import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
 
 export const noSecretsInClientCode = defineRule<Rule>({
   id: "no-secrets-in-client-code",
+  title: "Secret in client code",
   severity: "warn",
   recommendation:
-    "Move secrets to server-only code. Public client environment variables are bundled into browser code and must not contain secrets",
+    "Move secrets to server-only code. Anything in client env variables gets shipped to the browser, so it can't hold secrets.",
   create: (context: RuleContext) => {
     const filename = normalizeFilename(context.filename ?? "");
     const framework = getReactDoctorStringSetting(context.settings, "framework");
@@ -66,7 +67,7 @@ export const noSecretsInClientCode = defineRule<Rule>({
         ) {
           context.report({
             node,
-            message: `Possible hardcoded secret in "${variableName}" — use environment variables instead`,
+            message: `Hardcoding "${variableName}" in client code is a security vulnerability: the secret ships to the browser where anyone can read it.`,
           });
           return;
         }
@@ -74,7 +75,8 @@ export const noSecretsInClientCode = defineRule<Rule>({
         if (SECRET_PATTERNS.some((pattern) => pattern.test(literalValue))) {
           context.report({
             node,
-            message: "Hardcoded secret detected — use environment variables instead",
+            message:
+              "This hardcoded secret is a security vulnerability: it ships to the browser where anyone can read it.",
           });
         }
       },
