@@ -47,6 +47,7 @@ import {
 } from "./cli/utils/is-ci-environment.js";
 import { computeProjectedScore } from "./cli/utils/compute-score-projection.js";
 import { buildRulePriorityMap } from "./cli/utils/diagnostic-grouping.js";
+import { filterDiagnosticsByCategories } from "./cli/utils/filter-diagnostics-by-categories.js";
 import { printDiagnostics } from "./cli/utils/render-diagnostics.js";
 import { isNonInteractiveEnvironment } from "./cli/utils/is-non-interactive-environment.js";
 import {
@@ -64,6 +65,7 @@ import {
 } from "./cli/utils/render-score-header.js";
 import { printFooter, printSummary } from "./cli/utils/render-summary.js";
 import { resolveOxlintNode } from "./cli/utils/resolve-oxlint-node.js";
+import { resolveCliCategories } from "./cli/utils/resolve-cli-categories.js";
 import { getRunId } from "./cli/utils/run-id.js";
 import { isSpinnerSilent, setSpinnerSilent } from "./cli/utils/spinner.js";
 import { VERSION } from "./cli/utils/version.js";
@@ -73,6 +75,13 @@ const silentConsole = makeNoopConsole();
 const runConsole = (effect: Effect.Effect<void>): void => {
   Effect.runSync(effect);
 };
+
+const formatCategorySelection = (categoryFilters: ReadonlySet<string>): string =>
+  [...categoryFilters].join(", ");
+
+export interface ReactDoctorInspectOptions extends InspectOptions {
+  categoryFilters?: string[];
+}
 
 interface ResolvedInspectOptions {
   lint: boolean;
@@ -89,6 +98,7 @@ interface ResolvedInspectOptions {
   share: boolean;
   respectInlineDisables: boolean;
   warnings: boolean;
+  categoryFilters: ReadonlySet<string>;
   adoptExistingLintConfig: boolean;
   ignoredTags: ReadonlySet<string>;
   outputSurface: DiagnosticSurface;
@@ -108,7 +118,7 @@ const buildIgnoredTags = (userConfig: ReactDoctorConfig | null): ReadonlySet<str
 };
 
 const mergeInspectOptions = (
-  inputOptions: InspectOptions,
+  inputOptions: ReactDoctorInspectOptions,
   userConfig: ReactDoctorConfig | null,
 ): ResolvedInspectOptions => ({
   lint: inputOptions.lint ?? userConfig?.lint ?? true,
@@ -126,6 +136,7 @@ const mergeInspectOptions = (
   respectInlineDisables:
     inputOptions.respectInlineDisables ?? userConfig?.respectInlineDisables ?? true,
   warnings: inputOptions.warnings ?? userConfig?.warnings ?? DEFAULT_SHOW_WARNINGS,
+  categoryFilters: new Set(resolveCliCategories(inputOptions.categoryFilters) ?? []),
   adoptExistingLintConfig: userConfig?.adoptExistingLintConfig ?? true,
   ignoredTags: buildIgnoredTags(userConfig),
   outputSurface: inputOptions.outputSurface ?? "cli",
@@ -158,7 +169,7 @@ const buildRunEventConfig = (
 
 export const inspect = async (
   directory: string,
-  inputOptions: InspectOptions = {},
+  inputOptions: ReactDoctorInspectOptions = {},
 ): Promise<InspectResult> => {
   const startTime = performance.now();
 
@@ -698,17 +709,27 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       options.outputSurface,
       userConfig,
     );
+    const printedDiagnostics = filterDiagnosticsByCategories(
+      surfaceDiagnostics,
+      options.categoryFilters,
+    );
     const demotedDiagnosticCount = diagnostics.length - surfaceDiagnostics.length;
     const isDiffMode = options.includePaths.length > 0;
     const lintSourceFileCount = isDiffMode ? options.includePaths.length : project.sourceFileCount;
 
-    if (surfaceDiagnostics.length === 0) {
+    if (printedDiagnostics.length === 0) {
       yield* pause;
       if (hasSkippedChecks) {
         const skippedLabel = skippedChecks.join(" and ");
         yield* Console.warn(
           highlighter.warn(
             `No issues detected, but ${skippedLabel} checks failed — results are incomplete.`,
+          ),
+        );
+      } else if (options.categoryFilters.size > 0) {
+        yield* Console.log(
+          highlighter.success(
+            `No issues found in category ${formatCategorySelection(options.categoryFilters)}!`,
           ),
         );
       } else if (demotedDiagnosticCount > 0) {
@@ -736,7 +757,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
     yield* pause;
     yield* Console.log("");
     yield* printDiagnostics(
-      [...surfaceDiagnostics],
+      [...printedDiagnostics],
       options.verbose,
       directory,
       buildRulePriorityMap([score]),
@@ -747,7 +768,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       yield* printAgentGuidance();
     }
 
-    if (demotedDiagnosticCount > 0) {
+    if (options.categoryFilters.size === 0 && demotedDiagnosticCount > 0) {
       yield* Console.log(
         highlighter.gray(
           `  ${demotedDiagnosticCount} demoted from the ${options.outputSurface} surface (e.g. design cleanup) — run \`npx react-doctor@latest .\` locally for the full list.`,
@@ -760,14 +781,14 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
     // show the payoff as a ghost gain segment.
     const potentialScore = score
       ? yield* Effect.promise(() =>
-          computeProjectedScore([...surfaceDiagnostics], [...surfaceDiagnostics], score),
+          computeProjectedScore([...printedDiagnostics], [...surfaceDiagnostics], score),
         )
       : null;
 
     const shouldShowShareLink = !options.noScore && options.share && !options.isCi;
     yield* pause;
     yield* printSummary({
-      diagnostics: [...surfaceDiagnostics],
+      diagnostics: [...printedDiagnostics],
       elapsedMilliseconds,
       scoreResult: score,
       potentialScore,
@@ -787,7 +808,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
 
     yield* pause;
     yield* printFooter({
-      diagnostics: [...surfaceDiagnostics],
+      diagnostics: [...printedDiagnostics],
       scoreResult: score,
       projectName: project.projectName,
       isOffline: !shouldShowShareLink,
