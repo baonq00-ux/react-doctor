@@ -347,64 +347,11 @@ export const getSkillSourceDirectory = (): string => {
   return path.join(distDirectory, "skills", SKILL_NAME);
 };
 
-interface BundledSiblingSkill {
-  readonly name: string;
-  readonly source: string;
-}
-
-// Discovers skills that ship alongside the primary `react-doctor` skill
-// (currently `doctor-explain`). The parent of the resolved primary skill
-// dir is `dist/skills/`, which holds every bundled skill. Tests override
-// `sourceDir` to a lone temp skill dir, so this returns [] there — only
-// the real bundled layout produces siblings.
-const findBundledSiblingSkills = (primarySkillDir: string): BundledSiblingSkill[] => {
-  const skillsParent = path.dirname(primarySkillDir);
-  if (!fs.existsSync(skillsParent)) return [];
-  const resolvedPrimary = path.resolve(primarySkillDir);
-  return fs
-    .readdirSync(skillsParent, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => ({
-      name: entry.name,
-      source: path.join(skillsParent, entry.name),
-    }))
-    .filter(
-      (sibling) =>
-        path.resolve(sibling.source) !== resolvedPrimary &&
-        fs.existsSync(path.join(sibling.source, SKILL_MANIFEST_FILE)),
-    );
-};
-
-const installBundledSiblingSkills = async (
-  primarySkillDir: string,
-  agents: readonly SkillAgentType[],
-  projectRoot: string,
-): Promise<string[]> => {
-  const installedSkillNames: string[] = [];
-  for (const sibling of findBundledSiblingSkills(primarySkillDir)) {
-    const result = await installSkillsFromSource({
-      source: sibling.source,
-      agents: [...agents],
-      cwd: projectRoot,
-      mode: "copy",
-    });
-    if (result.failed.length > 0) {
-      throw new Error(
-        result.failed
-          .map((failure) => `${getSkillAgentConfig(failure.agent).displayName}: ${failure.error}`)
-          .join("\n"),
-      );
-    }
-    if (result.skills.length > 0) installedSkillNames.push(sibling.name);
-  }
-  return installedSkillNames;
-};
-
 const canInstallNativeAgentHooks = (agents: readonly SkillAgentType[]): boolean =>
   agents.some((agent) => agent === "claude-code" || agent === "cursor");
 
 // Installs the primary skill (throws on failure — the install can't continue
-// without it) and then the bundled sibling skills (best-effort).
+// without it).
 const installReactDoctorSkillStep = async (
   sourceDir: string,
   selectedAgents: SkillAgentType[],
@@ -440,19 +387,6 @@ const installReactDoctorSkillStep = async (
   } catch (error) {
     installSpinner.fail(`Failed to install ${SKILL_NAME} skill.`);
     throw error;
-  }
-
-  try {
-    const installedSiblingSkills = await installBundledSiblingSkills(
-      sourceDir,
-      selectedAgents,
-      projectRoot,
-    );
-    if (installedSiblingSkills.length > 0) {
-      logger.dim(`  Also installed the ${installedSiblingSkills.join(", ")} skill.`);
-    }
-  } catch {
-    logger.dim("  Skipped bundled sibling skills (install error).");
   }
 };
 
@@ -757,9 +691,6 @@ export const runInstallReactDoctor = async (
       logger.dim(`  - ${getSkillAgentConfig(agent).displayName}`);
     }
     logger.dim(`  Source: ${sourceDir}`);
-    for (const sibling of findBundledSiblingSkills(sourceDir)) {
-      logger.dim(`  Also installs skill: ${sibling.name}`);
-    }
     logger.dim("  Package script: doctor (or react-doctor if doctor exists)");
     logger.dim("  Dev dependency: react-doctor");
     if (shouldInstallGitHook) {
