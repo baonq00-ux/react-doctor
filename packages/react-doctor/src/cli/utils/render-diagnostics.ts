@@ -204,6 +204,16 @@ const TOP_ERROR_DETAIL_INDENT = "    ";
 const pickRepresentativeDiagnostic = (ruleDiagnostics: Diagnostic[]): Diagnostic =>
   ruleDiagnostics.find((diagnostic) => diagnostic.line > 0) ?? ruleDiagnostics[0];
 
+// True when a rule's sites all share one line-less location (e.g. every unused
+// dependency reports at `package.json:0`), so only their messages tell them apart.
+const hasIndistinctSiteLocations = (ruleDiagnostics: Diagnostic[]): boolean => {
+  const firstDiagnostic = ruleDiagnostics[0];
+  if (firstDiagnostic === undefined) return false;
+  return ruleDiagnostics.every(
+    (diagnostic) => diagnostic.line <= 0 && diagnostic.filePath === firstDiagnostic.filePath,
+  );
+};
+
 // A run of same-file sites of one rule whose individual frames would
 // overlap, rendered as a single spanning frame instead of N near-identical
 // boxes. `lead` is the first (lowest-line) site, used for the file path and
@@ -343,15 +353,21 @@ const buildRuleDetailBlock = (
     }
   }
 
-  // The description is the load-bearing "what and why" prose. Verbose still
-  // prints it once per rule (not per site), so users do not lose the impact
-  // explanation when they ask for every location.
-  for (const explanationLine of wrapTextToWidth(
-    representative.message,
-    resolveMeasureWidth(TOP_ERROR_DETAIL_INDENT.length),
-    { breakLongWords: false },
-  )) {
-    lines.push(`${TOP_ERROR_DETAIL_INDENT}${explanationLine}`);
+  // Impact prose, once per rule — except a warning group collapsed to one
+  // line-less location lists every distinct message so each name shows (#690).
+  const isCollapsedWarningGroup =
+    severity === "warning" && hasIndistinctSiteLocations(ruleDiagnostics);
+  const impactMessages = isCollapsedWarningGroup
+    ? [...new Set(ruleDiagnostics.map((diagnostic) => diagnostic.message))]
+    : [representative.message];
+  for (const impactMessage of impactMessages) {
+    for (const explanationLine of wrapTextToWidth(
+      impactMessage,
+      resolveMeasureWidth(TOP_ERROR_DETAIL_INDENT.length),
+      { breakLongWords: false },
+    )) {
+      lines.push(`${TOP_ERROR_DETAIL_INDENT}${explanationLine}`);
+    }
   }
 
   // The fix/recommendation, wrapped under the impact (a full sentence is
@@ -380,8 +396,16 @@ const buildRuleDetailBlock = (
   // still navigable, just without the inline source preview.
   const renderCodeFrame = severity === "error";
   const sites = renderEverySite ? ruleDiagnostics : [representative];
-  for (const cluster of clusterNearbyDiagnostics(sites)) {
-    lines.push(...buildDiagnosticClusterLines(cluster, resolveSourceRoot, renderCodeFrame));
+  // A collapsed group's sites share one line-less location. When the help
+  // already names it ("remove it from package.json"), the bare location line
+  // would just dangle — no frame, no line to navigate to — so skip it. Rules
+  // whose location is the subject (unused files) keep it: their help names no path.
+  const skipSharedLocation =
+    isCollapsedWarningGroup && representative.help.includes(representative.filePath);
+  if (!skipSharedLocation) {
+    for (const cluster of clusterNearbyDiagnostics(sites)) {
+      lines.push(...buildDiagnosticClusterLines(cluster, resolveSourceRoot, renderCodeFrame));
+    }
   }
 
   return lines;
