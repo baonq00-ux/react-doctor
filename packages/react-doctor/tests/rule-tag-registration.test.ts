@@ -35,6 +35,14 @@ describe("rule tag registration", () => {
     }
   });
 
+  it('tags every security scan rule (every rule carrying a scan) with "security-scan"', () => {
+    const securityScanRuleIds = collectRuleIdsMatching((rule) => rule.scan !== undefined);
+    expect(securityScanRuleIds.length).toBeGreaterThan(0);
+    for (const ruleId of securityScanRuleIds) {
+      expect(getRuleTags(ruleId)).toContain("security-scan");
+    }
+  });
+
   it('tags the four migration-hint rules with "migration-hint"', () => {
     const migrationHintRuleIds = [
       "no-react19-deprecated-apis",

@@ -5,13 +5,12 @@ import {
 } from "../../constants/nextjs.js";
 import { defineRule } from "../../utils/define-rule.js";
 import { normalizeFilename } from "../../utils/normalize-filename.js";
-import type { Rule } from "../../utils/rule.js";
 import type { RuleContext } from "../../utils/rule-context.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
 import { hasAncestorMetadataLayout } from "../../utils/find-ancestor-metadata-layout.js";
 
-export const nextjsMissingMetadata = defineRule<Rule>({
+export const nextjsMissingMetadata = defineRule({
   id: "nextjs-missing-metadata",
   title: "Page missing metadata for search previews",
   tags: ["test-noise"],

@@ -466,8 +466,8 @@ export const SUPPLY_CHAIN_MAX_ALERTS_SHOWN = 3;
 // paragraph-long malware description doesn't blow out the message line.
 export const SUPPLY_CHAIN_ALERT_NOTE_MAX_CHARS = 160;
 
-// Packages excluded from the Socket supply-chain check (the gate and the
-// `--sfw` listing). react-doctor already covers these frameworks' specific
+// Packages excluded from the Socket supply-chain check (the score gate).
+// react-doctor already covers these frameworks' specific
 // risks through dedicated rules — e.g. Next.js via the server-components /
 // Next rule family — so a low Socket score would be redundant noise rather
 // than an actionable, distinct supply-chain signal.

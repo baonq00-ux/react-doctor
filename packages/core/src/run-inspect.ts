@@ -18,6 +18,7 @@ import { checkPnpmHardening } from "./check-pnpm-hardening.js";
 import { checkReactNativeProject } from "./check-react-native-project.js";
 import { checkReactServerComponentsAdvisory } from "./check-react-server-components-advisory.js";
 import { checkReducedMotion } from "./check-reduced-motion.js";
+import { checkSecurityScan } from "./check-security-scan.js";
 import { DEFAULT_SHOW_WARNINGS } from "./constants.js";
 import { highlighter } from "./highlighter.js";
 import { computeExplicitLintIncludePaths } from "./explicit-lint-include-paths.js";
@@ -221,7 +222,8 @@ const formatLintFailText = (
  *
  *   1. Config.resolve(directory) → Project.discover → Git metadata
  *   2. beforeLint hook (e.g. CLI renders the project-detection block)
- *   3. environment checks (reduced-motion + pnpm hardening)
+ *   3. environment checks (reduced-motion + pnpm hardening +
+ *      expo/react-native + security scan)
  *   4. Linter.run + DeadCode.run — forked as concurrent fibers so
  *      their wall-clock times overlap. Progress spinners stay
  *      sequential (lint first, then dead-code) for clean terminal
@@ -348,6 +350,7 @@ export const runInspect = <HooksR = never>(
           ...checkReactServerComponentsAdvisory(scanDirectory, project),
           ...checkExpoProject(scanDirectory, project),
           ...checkReactNativeProject(scanDirectory, project),
+          ...checkSecurityScan(scanDirectory, { project, ignoredTags: input.ignoredTags }),
         ];
     const envCollected = yield* Stream.runCollect(
       applyPerElementPipeline(Stream.fromIterable(environmentDiagnostics)),
