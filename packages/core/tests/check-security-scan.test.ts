@@ -230,6 +230,528 @@ describe("checkSecurityScan", () => {
     });
   });
 
+  describe("supabase-table-missing-rls", () => {
+    it("flags a vibe-coded Supabase migration that creates a public table without RLS", () => {
+      expect(fixtureRules("supabase-public-table-missing-rls")).toEqual(
+        new Set(["supabase-table-missing-rls"]),
+      );
+    });
+
+    it("flags an unqualified public create table, then goes quiet once RLS is enabled", () => {
+      writeFile(
+        "supabase/migrations/001_create_todos.sql",
+        `create table todos (\n  id uuid primary key,\n  user_id uuid not null,\n  title text\n);\n`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("supabase-table-missing-rls");
+
+      writeFile(
+        "supabase/migrations/001_create_todos.sql",
+        `create table todos (\n  id uuid primary key,\n  user_id uuid not null\n);\nalter table todos enable row level security;\ncreate policy own_todos on todos using (auth.uid() = user_id);\n`,
+      );
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag create table in non-public, Supabase-managed schemas", () => {
+      writeFile(
+        "supabase/migrations/002_internal.sql",
+        `create table auth.audit_log (id uuid primary key, event text);\ncreate table private.secrets (id uuid primary key, value text);\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag plain SQL migrations outside the supabase directory", () => {
+      writeFile(
+        "drizzle/0000_init.sql",
+        `create table users (\n  id serial primary key,\n  email text not null\n);\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag a create table that appears only inside a SQL comment", () => {
+      writeFile(
+        "supabase/migrations/003_notes.sql",
+        `-- create table audit_log later when we add logging\nselect now();\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag a commented-out create table statement", () => {
+      writeFile(
+        "supabase/migrations/005_commented.sql",
+        `-- create table legacy_users (id uuid primary key);\n/* create table old_logs (id uuid primary key); */\ncreate table active_users (id uuid primary key);\nalter table active_users enable row level security;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag a create table that appears only inside a string literal", () => {
+      writeFile(
+        "supabase/migrations/006_seed.sql",
+        `create table notes (id uuid primary key, body text);\nalter table notes enable row level security;\ninsert into notes (body) values ('create table fake (id int);');\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag create table inside a dollar-quoted string value", () => {
+      writeFile(
+        "supabase/migrations/010_doc.sql",
+        `create table guides (id uuid primary key);\nalter table guides enable row level security;\ninsert into guides (body) values ($doc$ example: create table demo (id int); $doc$);\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet when RLS is enabled inside a DO block", () => {
+      writeFile(
+        "supabase/migrations/009_do_block.sql",
+        `create table reports (id uuid primary key);\ndo $$ begin\n  alter table reports enable row level security;\nend $$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag create table text inside a DO block string", () => {
+      writeFile(
+        "supabase/migrations/013_do_string.sql",
+        `create table invoices (id uuid primary key);\nalter table invoices enable row level security;\ndo $$ begin\n  raise notice 'create table example (id int)';\nend $$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag a create table comment inside a DO block", () => {
+      writeFile(
+        "supabase/migrations/012_do_comment.sql",
+        `create table sales (id uuid primary key);\nalter table sales enable row level security;\ndo $$ begin\n  -- create table legacy (id int);\n  perform 1;\nend $$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet when RLS is enabled inside a DO LANGUAGE block", () => {
+      writeFile(
+        "supabase/migrations/014_do_language.sql",
+        `create table audits (id uuid primary key);\ndo language plpgsql $$ begin\n  alter table audits enable row level security;\nend $$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("recognizes a DO LANGUAGE plpython3u block (digit in language name) as a code body", () => {
+      writeFile(
+        "supabase/migrations/017_plpython.sql",
+        `create table metrics (id uuid primary key);\ndo language plpython3u $$\nalter table metrics enable row level security;\n$$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet when RLS is enabled via a dynamic EXECUTE in a DO block", () => {
+      writeFile(
+        "supabase/migrations/011_dynamic.sql",
+        `create table ledgers (id uuid primary key);\ndo $$ begin\n  execute 'alter table ledgers enable row level security';\nend $$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet when RLS is enabled via EXECUTE format in a DO block", () => {
+      writeFile(
+        "supabase/migrations/015_execute_format.sql",
+        `create table tickets (id uuid primary key);\ndo $$ begin\n  execute format('alter table tickets enable row level security');\nend $$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("flags a table whose RLS enable only appears inside a PERFORM string (not executed)", () => {
+      writeFile(
+        "supabase/migrations/018_perform_rls.sql",
+        `create table balances (id uuid primary key);\ndo $$ begin\n  perform 'alter table balances enable row level security';\nend $$;\n`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("supabase-table-missing-rls");
+    });
+
+    it("does not flag a create table that appears only inside a PERFORM string", () => {
+      writeFile(
+        "supabase/migrations/019_perform_create.sql",
+        `create table accounts (id uuid primary key);\nalter table accounts enable row level security;\ndo $$ begin\n  perform 'create table shadow (id int)';\nend $$;\n`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("flags a table whose RLS enable is only inside a function body", () => {
+      writeFile(
+        "supabase/migrations/016_func.sql",
+        `create table widgets2 (id uuid primary key);\ncreate function enable_rls() returns void language plpgsql as $$ begin\n  alter table widgets2 enable row level security;\nend $$;\n`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("supabase-table-missing-rls");
+    });
+
+    it("flags a table when enable RLS appears before the create", () => {
+      writeFile(
+        "supabase/migrations/008_order.sql",
+        `alter table if exists widgets enable row level security;\ncreate table widgets (id uuid primary key);\n`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("supabase-table-missing-rls");
+    });
+
+    it("flags only the table missing RLS in a multi-table migration", () => {
+      writeFile(
+        "supabase/migrations/004_two_tables.sql",
+        `create table profiles (id uuid primary key);\nalter table profiles enable row level security;\ncreate table audit_log (id uuid primary key, event text);\n`,
+      );
+
+      const tableMissingRlsFindings = checkSecurityScan(temporaryRoot).filter(
+        (diagnostic) => diagnostic.rule === "supabase-table-missing-rls",
+      );
+      expect(tableMissingRlsFindings).toHaveLength(1);
+      expect(tableMissingRlsFindings[0]?.line).toBe(3);
+    });
+  });
+
+  describe("unsafe-json-in-html", () => {
+    it("flags JSON.stringify embedded in dangerouslySetInnerHTML and in <script> markup", () => {
+      writeFile(
+        "src/hydrate.tsx",
+        `export const Hydrate = ({ data }) => <div dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />;`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("unsafe-json-in-html");
+
+      writeFile(
+        "src/ssr.ts",
+        "export const shell = (state) => `<script>window.__DATA__ = ${JSON.stringify(state)}</script>`;",
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("unsafe-json-in-html");
+    });
+
+    it("stays quiet when the JSON.stringify result is escaped inline", () => {
+      writeFile(
+        "src/hydrate-safe.tsx",
+        'export const H = ({ data }) => <div dangerouslySetInnerHTML={{ __html: JSON.stringify(data).replace(/</g, "&lt;") }} />;',
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet when the escaped stringify call is wrapped in parentheses", () => {
+      writeFile(
+        "src/paren-hydrate.tsx",
+        'export const H = ({ data }) => <div dangerouslySetInnerHTML={{ __html: (JSON.stringify(data)).replace(/</g, "&lt;") }} />;',
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("still flags an unescaped sink when a safe serializer is only imported elsewhere", () => {
+      writeFile(
+        "src/mixed-hydrate.tsx",
+        'import serialize from "serialize-javascript";\nexport const safe = (s) => serialize(s);\nexport const Bad = ({ data }) => <div dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />;',
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("unsafe-json-in-html");
+    });
+
+    it("stays quiet when JSON.stringify is wrapped in an escape helper", () => {
+      writeFile(
+        "src/wrapped.tsx",
+        "export const H = ({ data }) => <div dangerouslySetInnerHTML={{ __html: escapeHtml(JSON.stringify(data)) }} />;",
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet when JSON.stringify is wrapped in devalue", () => {
+      writeFile(
+        "src/devalue-hydrate.tsx",
+        'import { uneval } from "devalue";\nexport const H = ({ data }) => <script dangerouslySetInnerHTML={{ __html: uneval(JSON.stringify(data)) }} />;',
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("still flags when an unrelated .serialize() method wraps the call", () => {
+      writeFile(
+        "src/serialize-method.tsx",
+        "export const H = ({ obj, data }) => <div dangerouslySetInnerHTML={{ __html: obj.serialize(JSON.stringify(data)) }} />;",
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("unsafe-json-in-html");
+    });
+
+    it("still flags when an escape helper is applied to the input, not the output", () => {
+      writeFile(
+        "src/preprocess.tsx",
+        "export const H = ({ data }) => <div dangerouslySetInnerHTML={{ __html: JSON.stringify(escapeHtml(data)) }} />;",
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("unsafe-json-in-html");
+    });
+  });
+
+  describe("jwt-insecure-verification", () => {
+    it("flags the JWT 'none' algorithm in verify and sign options", () => {
+      writeFile(
+        "src/jwt-none.ts",
+        `import jwt from "jsonwebtoken";\nexport const v = (t, k) => jwt.verify(t, k, { algorithms: ["none"] });`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("jwt-insecure-verification");
+
+      writeFile(
+        "src/jwt-sign-none.ts",
+        `import jwt from "jsonwebtoken";\nexport const sign = (payload, key) => jwt.sign(payload, key, { algorithm: "none" });`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("jwt-insecure-verification");
+    });
+
+    it("flags a JWT none algorithm inside a template expression", () => {
+      writeFile(
+        "src/jwt-template.ts",
+        'import jwt from "jsonwebtoken";\nexport const build = () => `verify: ${JSON.stringify({ alg: "none" })}`;',
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("jwt-insecure-verification");
+    });
+
+    it("flags a JOSE-style alg: none header", () => {
+      writeFile(
+        "src/jose-none.ts",
+        `import * as jose from "jose";\nexport const protectedHeader = { alg: "none" };\nexport const lib = jose;`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("jwt-insecure-verification");
+    });
+
+    it("does not flag the 'none' algorithm mentioned inside a string literal", () => {
+      writeFile(
+        "src/jwt-doc.ts",
+        `import jwt from "jsonwebtoken";\nexport const warning = "never set algorithm: 'none' in production";\nexport const v = (t, k) => jwt.verify(t, k, { algorithms: ["RS256"] });`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet for pinned algorithms and for verify calls in any options shape", () => {
+      // The rule deliberately does not flag unpinned verify (it cannot resolve
+      // the options binding precisely); only `none` is reported. So an inline
+      // pin, an options variable, and a callback form all stay quiet.
+      writeFile(
+        "src/jwt-ok.ts",
+        `import jwt from "jsonwebtoken";\nexport const v = (t, k) => jwt.verify(t, k, { algorithms: ["RS256"] });`,
+      );
+      writeFile(
+        "src/jwt-opts-var.ts",
+        `import jwt from "jsonwebtoken";\nconst options = { issuer: "x" };\nexport const v = (t, k) => jwt.verify(t, k, options);`,
+      );
+      writeFile(
+        "src/jwt-callback.ts",
+        `import jwt from "jsonwebtoken";\nexport const v = (t, k, cb) => jwt.verify(t, k, cb);`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+  });
+
+  describe("secret-in-fallback", () => {
+    it("flags a secret env var with a hardcoded string fallback", () => {
+      writeFile(
+        "src/config.ts",
+        `export const key = process.env.STRIPE_SECRET_KEY ?? "hardcoded-fallback-secret-value";`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("secret-in-fallback");
+    });
+
+    it("stays quiet for placeholder fallbacks and public keys", () => {
+      writeFile(
+        "src/config-ok.ts",
+        `export const apiKey = process.env.API_KEY ?? "your_api_key_here";\nexport const anon = process.env.NEXT_PUBLIC_ANON_KEY ?? "sb_publishable_abcdefghij";`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("stays quiet for secret-referencing names that hold config, not the secret", () => {
+      writeFile(
+        "src/config-refs.ts",
+        [
+          `export const header = process.env.AUTH_TOKEN_HEADER ?? "authorization";`,
+          `export const endpoint = process.env.TOKEN_ENDPOINT ?? "https://auth.example.com/token";`,
+          `export const keyId = process.env.AWS_ACCESS_KEY_ID ?? "AKIAIOSFODNN7ABCDEFG";`,
+        ].join("\n"),
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+  });
+
+  describe("request-body-mass-assignment", () => {
+    it("flags spreading and merging request input without an allowlist", () => {
+      writeFile(
+        "src/create-user.ts",
+        `export const create = (req, res) => db.insert(users).values({ ...req.body });`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("request-body-mass-assignment");
+
+      writeFile(
+        "src/merge-config.ts",
+        `export const apply = (req, target) => Object.assign(target, req.body);`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("request-body-mass-assignment");
+    });
+
+    it("flags a request spread that is not the first property", () => {
+      writeFile(
+        "src/create-user-trailing.ts",
+        `export const create = (req) => db.insert(users).values({ title: req.body.title, ...req.body });`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("request-body-mass-assignment");
+    });
+
+    it("stays quiet when explicit fields are assigned", () => {
+      writeFile(
+        "src/create-user-ok.ts",
+        `export const create = (req, res) => db.insert(users).values({ title: req.body.title, ownerId: res.locals.userId });`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+  });
+
+  describe("insecure-session-cookie", () => {
+    it("flags httpOnly:false, document.cookie auth writes, and bare cookie sets", () => {
+      writeFile(
+        "src/auth.ts",
+        `export const set = (res, token) => res.cookie("session", token, { httpOnly: false });`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("insecure-session-cookie");
+
+      writeFile(
+        "src/client-auth.ts",
+        "export const save = (token) => { document.cookie = `access_token=${token}; path=/`; };",
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("insecure-session-cookie");
+
+      writeFile(
+        "src/login.ts",
+        `export const login = (res, token) => res.cookie("auth_token", token);`,
+      );
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("insecure-session-cookie");
+    });
+
+    it("stays quiet for hardened cookies", () => {
+      writeFile(
+        "src/auth-ok.ts",
+        `export const set = (res, token) =>\n  res.cookie("session", token, { httpOnly: true, secure: true, sameSite: "lax" });`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("flags a Next.js response.cookies.set auth cookie without options", () => {
+      writeFile(
+        "src/next-cookie.ts",
+        `export const GET = (response, token) => response.cookies.set("session", token);`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("insecure-session-cookie");
+    });
+
+    it("flags httpOnly:false even when it sits late in a long options object", () => {
+      writeFile(
+        "src/long-cookie.ts",
+        `export const set = (res, token) =>\n  res.cookie("session", token, { path: "/", domain: "app.example.com", maxAge: 3_600_000, sameSite: "lax", secure: true, signed: true, encode: String, httpOnly: false });`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("insecure-session-cookie");
+    });
+
+    it("does not flag a hardened cookie when 'httpOnly: false' appears in a string value", () => {
+      writeFile(
+        "src/note-cookie.ts",
+        `export const set = (res, token) =>\n  res.cookie("session", token, { httpOnly: true, note: "never set httpOnly: false here" });`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag a hardened cookies().set call", () => {
+      writeFile(
+        "src/headers-cookie.ts",
+        `export const setSession = (token) =>\n  cookies().set("session", token, { httpOnly: true, secure: true, sameSite: "lax" });`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag non-auth cookie names that merely start with an auth keyword", () => {
+      writeFile(
+        "src/ui-cookies.ts",
+        `export const a = (res) => res.cookie("sidebar", "open");\nexport const b = (res) => res.cookie("author", "jane");`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("flags a session middleware cookie config that disables httpOnly", () => {
+      writeFile(
+        "src/session-insecure.ts",
+        `export const config = session({ cookie: { httpOnly: false } });`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("insecure-session-cookie");
+    });
+
+    it("flags a cookie config with httpOnly:false after a nested object", () => {
+      writeFile(
+        "src/session-nested.ts",
+        `export const config = session({ cookie: { store: { ttl: 60 }, httpOnly: false } });`,
+      );
+
+      expect(rulesOf(checkSecurityScan(temporaryRoot))).toContain("insecure-session-cookie");
+    });
+
+    it("does not flag a cookie config when 'httpOnly: false' is only in a string", () => {
+      writeFile(
+        "src/session-config.ts",
+        `export const config = session({ cookie: { httpOnly: true, comment: "never use httpOnly: false" } });`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag a non-auth cookie that disables httpOnly", () => {
+      writeFile(
+        "src/theme-cookie.ts",
+        `export const set = (res) => res.cookie("theme", "dark", { httpOnly: false });`,
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+
+    it("does not flag CSRF/XSRF double-submit cookies, which must be JS-readable", () => {
+      writeFile(
+        "src/csrf-cookie.ts",
+        [
+          `export const a = (res, t) => res.cookie("XSRF-TOKEN", t);`,
+          `export const b = (t) => cookies().set("csrf-token", t);`,
+          `export const c = (t) => { document.cookie = \`csrf-token=\${t}; path=/\`; };`,
+        ].join("\n"),
+      );
+
+      expect(checkSecurityScan(temporaryRoot)).toEqual([]);
+    });
+  });
+
   it("covers the P0-P2 P0-P2 security analyzer families", () => {
     writeFile(
       ".next/static/chunks/app.js",
