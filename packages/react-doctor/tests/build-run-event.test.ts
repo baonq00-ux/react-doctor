@@ -83,6 +83,7 @@ const baseInput = (overrides: Partial<RunEventInput> = {}): RunEventInput => ({
   lintFailureReasonKind: null,
   lintPartialFailureCount: 0,
   didDeadCodeFail: false,
+  deadCodeOverlapped: false,
   ...overrides,
 });
 
@@ -103,6 +104,23 @@ describe("buildRunEventAttributes", () => {
       if (previous === undefined) delete process.env[name];
       else process.env[name] = previous;
     }
+  });
+
+  it("records whether the dead-code pass overlapped lint, and drops it on the failure path", () => {
+    expect(
+      buildRunEventAttributes(baseInput({ result: buildResult(), deadCodeOverlapped: true }))
+        .deadCodeOverlapped,
+    ).toBe(true);
+    // A false dimension is still emitted (toSpanAttributes only drops null), so
+    // overlap-adoption rate is queryable across all scans.
+    expect(
+      buildRunEventAttributes(baseInput({ result: buildResult(), deadCodeOverlapped: false }))
+        .deadCodeOverlapped,
+    ).toBe(false);
+    // Failure path (no result) carries no outcome dimensions, so it's dropped.
+    expect(
+      buildRunEventAttributes(baseInput({ error: new Error("boom") })).deadCodeOverlapped,
+    ).toBeUndefined();
   });
 
   it("marks a finding-free run clean and drops absent CI signals", () => {
@@ -236,6 +254,25 @@ describe("buildRunEventAttributes", () => {
     expect(attributes.totalDiagnostics).toBeUndefined();
   });
 
+  it("records the supply-chain overlap timeout outcome and drops it when absent", () => {
+    // The healthy path reports `false`; the rare hung-socket guard reports
+    // `true`. When the field is omitted (failure path / cache hit), it's dropped
+    // rather than coerced to a misleading value.
+    expect(
+      buildRunEventAttributes(
+        baseInput({ result: buildResult(), supplyChainOverlapTimedOut: true }),
+      ).supplyChainOverlapTimedOut,
+    ).toBe(true);
+    expect(
+      buildRunEventAttributes(
+        baseInput({ result: buildResult(), supplyChainOverlapTimedOut: false }),
+      ).supplyChainOverlapTimedOut,
+    ).toBe(false);
+    expect(
+      buildRunEventAttributes(baseInput({ result: buildResult() })).supplyChainOverlapTimedOut,
+    ).toBeUndefined();
+  });
+
   it("emits the baseline delta on a computed baseline run", () => {
     const result = buildResult({
       diagnostics: [buildDiagnostic(), buildDiagnostic({ filePath: "src/B.tsx" })],
@@ -273,6 +310,17 @@ describe("buildRunEventAttributes", () => {
     expect(buildRunEventAttributes(baseInput({ result: buildResult() })).versionPin).toBe("pinned");
     process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.version] = "./local/pkg";
     expect(buildRunEventAttributes(baseInput({ result: buildResult() })).versionPin).toBe("local");
+  });
+
+  it("records lintDroppedFileCount when present and drops it when absent", () => {
+    const withDrops = buildRunEventAttributes(
+      baseInput({ result: buildResult(), lintDroppedFileCount: 4 }),
+    );
+    expect(withDrops.lintDroppedFileCount).toBe(4);
+
+    // Not passed -> null -> dropped, never coerced to a misleading "null".
+    const withoutDrops = buildRunEventAttributes(baseInput({ result: buildResult() }));
+    expect(withoutDrops.lintDroppedFileCount).toBeUndefined();
   });
 
   it("captures config shape and drops null/undefined-valued attributes", () => {
